@@ -1,0 +1,12 @@
+{
+  "name": "monitoring",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @repo/web",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

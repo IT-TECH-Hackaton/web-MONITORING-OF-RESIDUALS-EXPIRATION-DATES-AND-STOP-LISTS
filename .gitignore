@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+node_modules/
+dist/
+.expo/
+web-build/
+*.user
+.env
+.env.local
+TestResults/
+.idea/
+.tools/

@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: monitoring
+      POSTGRES_PASSWORD: monitoring
+      POSTGRES_DB: monitoring
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitoring -d monitoring"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=monitoring;Username=monitoring;Password=monitoring
+      Jwt__Key: dev-only-monitoring-jwt-key-change-me-32b
+      ASPNETCORE_ENVIRONMENT: Production
+    ports:
+      - "5080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
