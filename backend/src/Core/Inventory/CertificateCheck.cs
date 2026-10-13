@@ -4,8 +4,10 @@ public sealed record QualityCertificate(string Number, string Issuer, DateTime I
 
 public sealed record CertificateVerdict(bool Ok, string? Reason);
 
+/// <summary>Проверка сертификата на QR поставки. Не проходит — всю поставку отклоняем, склад не трогаем.</summary>
 public static class CertificateCheck
 {
+    /// <summary>Вход: сертификат и сейчас. Выход: годен или текст, чего не хватает (номер, орган, срок).</summary>
     public static CertificateVerdict Evaluate(QualityCertificate? certificate, DateTime utcNow)
     {
         if (certificate is null || string.IsNullOrWhiteSpace(certificate.Number))

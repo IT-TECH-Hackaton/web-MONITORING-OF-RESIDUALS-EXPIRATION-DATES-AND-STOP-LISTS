@@ -1,3 +1,20 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { CartProvider } from "./cart";
 import { AnalyticsPage } from "./pages/Analytics";
@@ -10,9 +27,10 @@ import { LoginPage } from "./pages/Login";
 import { KitchenPage } from "./pages/Kitchen";
 import { OffersPage } from "./pages/Offers";
 import { OrdersPage } from "./pages/Orders";
+import { ReportsPage } from "./pages/Reports";
 import { StockPage, StockProductPage } from "./pages/Stock";
 import { useSession } from "./session";
-import { ThemeToggle } from "./theme";
+import { useTheme } from "./theme";
 
 const managerLinks = [
   ["/", "Сводка"],
@@ -21,44 +39,70 @@ const managerLinks = [
   ["/dishes", "Блюда"],
   ["/orders", "Заказы"],
   ["/analytics", "Аналитика"],
+  ["/reports", "Отчёты"],
 ];
 
 const kitchenLinks = [["/kitchen", "Смена"]];
 
 function Shell() {
   const { session, client } = useSession();
+  const { toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   if (!session) return <Navigate to="/login" replace />;
   if (session.role === "Waiter") return <Navigate to="/floor" replace />;
   if (session.role === "Kitchen" && location.pathname !== "/kitchen") return <Navigate to="/kitchen" replace />;
 
+  const links = session.role === "Kitchen" ? kitchenLinks : managerLinks;
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <strong>Остатки</strong>
-          <span>{session.role === "Kitchen" ? "Смена кухни" : "Стоп, сроки, склад"}</span>
-        </div>
-        <nav className="nav">
-          {(session.role === "Kitchen" ? kitchenLinks : managerLinks).map(([to, label]) => (
-            <NavLink key={to} to={to} end={to === "/"}>
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-foot">
-          <span>{session.login}</span>
-          <div className="sidebar-foot-actions">
-            <button type="button" className="sidebar-logout" onClick={() => { client.logout(); navigate("/login"); }}>Выйти</button>
-            <ThemeToggle />
+    <TooltipProvider>
+      <SidebarProvider>
+        <Sidebar collapsible="offcanvas">
+          <SidebarHeader>
+            <div className="flex flex-col gap-2 px-2 py-1">
+              <strong className="text-sm">Остатки</strong>
+              <Badge variant="secondary">{session.role === "Kitchen" ? "Смена кухни" : "Стоп, сроки, склад"}</Badge>
+            </div>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {links.map(([to, label]) => {
+                    const active = to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
+                    return (
+                      <SidebarMenuItem key={to}>
+                        <SidebarMenuButton
+                          size="lg"
+                          isActive={active}
+                          render={<NavLink to={to} end={to === "/"} />}
+                        >
+                          {label}
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarFooter>
+            <span className="px-2 text-xs text-muted-foreground">{session.login}</span>
+            <Button variant="outline" onClick={() => { client.logout(); navigate("/login"); }}>Выйти</Button>
+            <Button variant="ghost" onClick={(event) => toggleTheme(event)}>Тема</Button>
+          </SidebarFooter>
+        </Sidebar>
+        <SidebarInset>
+          <header className="flex h-12 items-center gap-2 border-b px-3 md:hidden">
+            <SidebarTrigger />
+            <span className="text-sm font-medium">Остатки</span>
+          </header>
+          <div className="main">
+            <Outlet />
           </div>
-        </div>
-      </aside>
-      <main className="main">
-        <Outlet />
-      </main>
-    </div>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
 
@@ -93,6 +137,7 @@ export function App() {
         <Route path="offers" element={<OffersPage />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="reports" element={<ReportsPage />} />
       </Route>
     </Routes>
   );

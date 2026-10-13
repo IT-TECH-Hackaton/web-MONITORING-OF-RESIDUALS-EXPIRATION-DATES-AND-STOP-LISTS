@@ -9,6 +9,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("manager123");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   if (session?.role === "Waiter") return <Navigate to="/floor" replace />;
   if (session?.role === "Kitchen") return <Navigate to="/kitchen" replace />;
@@ -38,7 +39,23 @@ export function LoginPage() {
         </label>
         <label>
           Пароль
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+          <span className="password-field">
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+            <button
+              type="button"
+              className="password-toggle"
+              aria-pressed={showPassword}
+              aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              onClick={() => setShowPassword((current) => !current)}
+            >
+              {showPassword ? "Скрыть" : "Показать"}
+            </button>
+          </span>
         </label>
         {error ? <p className="error-text">{error}</p> : <p className="hint">manager / manager123 · kitchen / kitchen123 · waiter / waiter123</p>}
         <button className="btn" disabled={pending}>{pending ? "Входим…" : "Войти"}</button>

@@ -15,8 +15,13 @@ public sealed class ExpiryWatchState
     public void Forget(Guid batchId) => _announced.TryRemove(batchId, out _);
 }
 
+/// <summary>Фоновый проход срока. Сам вызывается воркером, не ручкой.</summary>
 public sealed class ExpiryProcessor(AppDbContext db, IClock clock, StockBroadcaster broadcaster, ExpiryWatchState state)
 {
+    /// <summary>
+    /// Списывает просроченные активные партии статьёй Expiry и предупреждает о тех, что истекают в ближайшие сутки.
+    /// Повторно уже объявленную партию не орёт.
+    /// </summary>
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -32,6 +37,7 @@ public sealed class ExpiryProcessor(AppDbContext db, IClock clock, StockBroadcas
                 Id = Guid.NewGuid(),
                 BatchId = batch.Id,
                 Type = MovementType.ExpiryWriteOff,
+                Reason = nameof(WriteOffReason.Expiry),
                 Quantity = batch.QuantityRemaining,
                 CreatedAt = now,
             });

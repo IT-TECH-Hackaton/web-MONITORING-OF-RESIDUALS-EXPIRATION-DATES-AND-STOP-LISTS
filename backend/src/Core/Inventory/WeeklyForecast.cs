@@ -9,6 +9,10 @@ public sealed record WeeklyProjection(
     decimal OnHand,
     decimal Shortfall);
 
+/// <summary>
+/// Прогноз менеджеру: расход с понедельника растягивает на полные 7 дней и смотрит, хватит ли партий на следующую неделю.
+/// Партии, которые истекут раньше дня, в этот день уже не считает.
+/// </summary>
 public static class WeeklyForecast
 {
     public static DateTime WeekStart(DateTime utcNow)

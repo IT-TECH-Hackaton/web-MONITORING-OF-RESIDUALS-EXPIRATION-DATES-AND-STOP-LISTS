@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient, type ApiClient, type Session } from "@repo/contracts";
-import { connectLive, LiveEvents } from "@repo/realtime";
+import { bindLive, connectLive, LiveEvents } from "@repo/realtime";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -76,19 +76,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const connection = connectLive(memory.baseUrl, () => memory.session?.accessToken ?? "");
     const refresh = () => {
       void queryClient.invalidateQueries({ queryKey: ["stop-list"] });
+      void queryClient.invalidateQueries({ queryKey: ["priority"] });
       void queryClient.invalidateQueries({ queryKey: ["hot-offers"] });
     };
     connection.on(LiveEvents.stopListUpdated, refresh);
+    connection.on(LiveEvents.shiftUpdated, refresh);
     connection.on(LiveEvents.hotOffersUpdated, refresh);
     connection.on(LiveEvents.stockChanged, refresh);
     connection.on(LiveEvents.batchExpired, refresh);
     connection.on(LiveEvents.kitchenUpdated, () => {
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
     });
-    void connection.start().catch(() => undefined);
-    return () => {
-      void connection.stop();
-    };
+    return bindLive(connection);
   }, [queryClient, session?.accessToken, session?.role, baseUrl]);
 
   const store = useMemo<Store>(() => ({

@@ -1,4 +1,4 @@
-import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type QrIntakeResult, type Session, type StockItem, type StopEntry, type Unit, type WeeklyForecastReport, type WriteOff, type Batch } from "./types";
+import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type QrIntakeResult, type Session, type ShiftHistoryEntry, type StockItem, type StopEntry, type Unit, type MoneyReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
 
 export type TokenStore = {
   getAccess: () => string | null;
@@ -97,10 +97,11 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     stock: () => request("/api/stock").then((response) => json<StockItem[]>(response)),
     batches: (productId: string) => request(`/api/stock/${productId}/batches`).then((response) => json<Batch[]>(response)),
     stopList: () => request("/api/stop-list").then((response) => json<StopEntry[]>(response)),
+    priority: () => request("/api/priority").then((response) => json<StopEntry[]>(response)),
     hotOffers: () => request("/api/hot-offers").then((response) => json<HotOffer[]>(response)),
     dashboard: () => request("/api/dashboard").then((response) => json<Dashboard>(response)),
     orders: () => request("/api/orders").then((response) => json<Order[]>(response)),
-    async placeOrder(input: { id: string; connectionId?: string | null; items: { dishId: string; portions: number }[] }) {
+    async placeOrder(input: { id: string; connectionId?: string | null; tableNumber?: string | null; items: { dishId: string; portions: number }[] }) {
       const response = await request("/api/orders", { method: "POST", body: JSON.stringify(input) });
       const text = await response.text();
       const body = text ? (JSON.parse(text) as Order & { message?: string }) : null;
@@ -112,9 +113,23 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
       }
       return body as Order;
     },
-    writeOffs: () => request("/api/analytics/write-offs").then((response) => json<WriteOff[]>(response)),
+    writeOffs: (reason?: string) =>
+      request(`/api/analytics/write-offs${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`).then((response) => json<WriteOff[]>(response)),
+    createWriteOff: (input: { reason: WriteOffReason; items: { productId: string; quantity: number; batchId?: string | null }[] }) =>
+      request("/api/write-offs", { method: "POST", body: JSON.stringify(input) }).then((response) => json<{ count: number }>(response)),
+    shiftHistory: (dishId?: string) =>
+      request(`/api/shift/history${dishId ? `?dishId=${dishId}` : ""}`).then((response) => json<ShiftHistoryEntry[]>(response)),
+    shiftStop: (dishId: string, reason: string, note: string) =>
+      request(`/api/shift/dishes/${dishId}/stop`, { method: "POST", body: JSON.stringify({ reason, note }) }).then((response) => json<StopEntry>(response)),
+    shiftResume: (dishId: string) =>
+      request(`/api/shift/dishes/${dishId}/resume`, { method: "POST" }).then((response) => json<StopEntry>(response)),
+    shiftPortions: (dishId: string, delta: number) =>
+      request(`/api/shift/dishes/${dishId}/portions`, { method: "POST", body: JSON.stringify({ delta }) }).then((response) => json<StopEntry>(response)),
+    shiftPriority: (dishId: string, on: boolean) =>
+      request(`/api/shift/dishes/${dishId}/priority`, { method: "POST", body: JSON.stringify({ on }) }).then((response) => json<StopEntry>(response)),
     deficits: () => request("/api/analytics/deficits").then((response) => json<Deficit[]>(response)),
     weeklyForecast: () => request("/api/analytics/weekly-forecast").then((response) => json<WeeklyForecastReport>(response)),
+    reports: () => request("/api/reports").then((response) => json<MoneyReport>(response)),
     kitchen: () => request("/api/kitchen").then((response) => json<KitchenBoard>(response)),
     markDish: (orderId: string, itemId: string, status: KitchenStatus, note: string) =>
       request(`/api/kitchen/orders/${orderId}/items/${itemId}`, {

@@ -1,5 +1,5 @@
 import { createClient, type ApiClient, type Session } from "@repo/contracts";
-import { connectLive, LiveEvents } from "@repo/realtime";
+import { bindLive, connectLive, LiveEvents } from "@repo/realtime";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -57,7 +57,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!session?.accessToken) return;
     const connection = connectLive(apiBaseUrl, () => memory.session?.accessToken ?? "");
     const refresh = () => {
-      for (const key of ["dashboard", "stock", "batches", "stop-list", "hot-offers", "orders", "deliveries", "write-offs", "deficits", "weekly-forecast", "kitchen"]) {
+      for (const key of ["dashboard", "stock", "batches", "stop-list", "priority", "hot-offers", "orders", "deliveries", "write-offs", "deficits", "weekly-forecast", "kitchen", "reports"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     };
@@ -67,10 +67,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     connection.on(LiveEvents.batchExpired, refresh);
     connection.on(LiveEvents.stopListUpdated, refresh);
     connection.on(LiveEvents.hotOffersUpdated, refresh);
-    void connection.start().catch(() => undefined);
-    return () => {
-      void connection.stop();
-    };
+    connection.on(LiveEvents.shiftUpdated, refresh);
+    return bindLive(connection);
   }, [queryClient, session?.accessToken, session?.role]);
 
   const store = useMemo<Store>(() => ({ session, client }), [session]);

@@ -22,7 +22,7 @@ export default function FloorLayout() {
       <Tabs.Screen name="menu" options={{ title: "Меню" }} />
       <Tabs.Screen name="order" options={{ title: "Заказ" }} />
       <Tabs.Screen name="pickup" options={{ href: null }} />
-      <Tabs.Screen name="tips" options={{ title: "Советы" }} />
+      <Tabs.Screen name="tips" options={{ title: "Предложить" }} />
     </Tabs>
   );
 }

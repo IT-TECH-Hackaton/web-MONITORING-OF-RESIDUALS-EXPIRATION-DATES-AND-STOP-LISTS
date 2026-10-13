@@ -1,15 +1,8 @@
-import { formatHours, formatQty } from "@repo/contracts";
-import { useMemo, useState } from "react";
+import { ApiError, formatHours, formatQty, type Product, type ShiftHistoryEntry, type StopEntry, type StopReason, type WriteOffReason } from "@repo/contracts";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { parsePortionPhrase, type PortionProposal } from "../portionVoice";
 import { useSession } from "../session";
-import {
-  demoHotSuggest,
-  demoWasteProducts,
-  STOP_REASONS,
-  WASTE_REASONS,
-  type ShiftDish,
-  type StopReason,
-} from "../shiftDemo";
-import { useShift } from "../shiftStore";
 import { DishTile, Empty, formatWhen, isLow, Panel } from "../ui";
 
 type Filter = "all" | "stop" | "low" | "candidate" | "priority";
@@ -22,9 +15,25 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "priority", label: "Приоритет" },
 ];
 
-function sortShift(dishes: ShiftDish[]) {
+const STOP_REASONS: { id: StopReason; label: string }[] = [
+  { id: "OutOfProduct", label: "Закончился продукт" },
+  { id: "Waste", label: "Брак" },
+  { id: "Quality", label: "Качество" },
+  { id: "WontMakeIt", label: "Не успеем" },
+  { id: "Equipment", label: "Техника" },
+];
+
+const WASTE_REASONS: { id: WriteOffReason; label: string }[] = [
+  { id: "Expiry", label: "Срок" },
+  { id: "Waste", label: "Брак" },
+  { id: "Spoilage", label: "Порча" },
+  { id: "Training", label: "Проработка" },
+  { id: "StaffMeal", label: "Питание" },
+];
+
+function sortShift(dishes: StopEntry[]) {
   return [...dishes].sort((a, b) => {
-    const rank = (dish: ShiftDish) => {
+    const rank = (dish: StopEntry) => {
       if (dish.isStopped) return 0;
       if (dish.isCandidate) return 1;
       if (isLow(dish)) return 2;
@@ -35,7 +44,7 @@ function sortShift(dishes: ShiftDish[]) {
   });
 }
 
-function matchesFilter(dish: ShiftDish, filter: Filter) {
+function matchesFilter(dish: StopEntry, filter: Filter) {
   if (filter === "stop") return dish.isStopped;
   if (filter === "low") return isLow(dish);
   if (filter === "candidate") return dish.isCandidate && !dish.isStopped;
@@ -43,41 +52,66 @@ function matchesFilter(dish: ShiftDish, filter: Filter) {
   return true;
 }
 
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : "Не получилось сохранить смену";
+}
+
 export function KitchenPage() {
-  const { session } = useSession();
-  const actor = session?.login ?? "шеф";
-  const shift = useShift();
+  const { client } = useSession();
+  const queryClient = useQueryClient();
+  const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
+  const offers = useQuery({ queryKey: ["hot-offers"], queryFn: () => client.hotOffers() });
+  const kitchen = useQuery({ queryKey: ["kitchen"], queryFn: () => client.kitchen() });
+  const dishes = stop.data ?? [];
   const [openId, setOpenId] = useState<string | null>(null);
   const [wasteOpen, setWasteOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const open = shift.dishes.find((dish) => dish.dishId === openId) ?? null;
+  const [hint, setHint] = useState<string | null>(null);
+  const open = dishes.find((dish) => dish.dishId === openId) ?? null;
   const needle = query.trim().toLocaleLowerCase("ru");
 
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ["stop-list"] });
+    await queryClient.invalidateQueries({ queryKey: ["priority"] });
+    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    await queryClient.invalidateQueries({ queryKey: ["kitchen"] });
+  }
+
+  async function run(action: () => Promise<unknown>, ok: string) {
+    try {
+      await action();
+      setHint(ok);
+      await refresh();
+    } catch (error) {
+      setHint(messageOf(error));
+    }
+  }
+
   const counts = useMemo(() => ({
-    all: shift.dishes.length,
-    stop: shift.dishes.filter((dish) => dish.isStopped).length,
-    low: shift.dishes.filter(isLow).length,
-    candidate: shift.dishes.filter((dish) => dish.isCandidate && !dish.isStopped).length,
-    priority: shift.dishes.filter((dish) => dish.isPriority && !dish.isStopped).length,
-  }), [shift.dishes]);
+    all: dishes.length,
+    stop: dishes.filter((dish) => dish.isStopped).length,
+    low: dishes.filter(isLow).length,
+    candidate: dishes.filter((dish) => dish.isCandidate && !dish.isStopped).length,
+    priority: dishes.filter((dish) => dish.isPriority && !dish.isStopped).length,
+  }), [dishes]);
 
   const visible = useMemo(() => {
-    const found = shift.dishes.filter((dish) => {
+    const found = dishes.filter((dish) => {
       if (!matchesFilter(dish, filter)) return false;
       if (!needle) return true;
       return dish.dishName.toLocaleLowerCase("ru").includes(needle);
     });
     return sortShift(found);
-  }, [shift.dishes, filter, needle]);
+  }, [dishes, filter, needle]);
 
-  const hot = demoHotSuggest
+  const hot = (offers.data ?? [])
     .map((item) => {
-      const dish = shift.dishes.find((entry) => entry.dishId === item.dishId);
+      const dish = dishes.find((entry) => entry.dishId === item.dishId);
       if (!dish || dish.isStopped || dish.isPriority) return null;
       return { dish, reason: item.reason };
     })
-    .filter((item): item is { dish: ShiftDish; reason: string } => item != null)
+    .filter((item): item is { dish: StopEntry; reason: string } => item != null)
     .slice(0, 4);
 
   return (
@@ -89,7 +123,7 @@ export function KitchenPage() {
         </div>
         <button type="button" className="btn-ghost" onClick={() => setWasteOpen(true)}>Акт списания</button>
       </div>
-      {shift.lastHint ? <p className="hint">{shift.lastHint}</p> : null}
+      {hint ? <p className="hint">{hint}</p> : null}
       <div className="shift-toolbar">
         <div className="shift-filters" role="tablist" aria-label="Фильтр плиток">
           {FILTERS.map((item) => (
@@ -123,7 +157,7 @@ export function KitchenPage() {
                   <strong>{item.dish.dishName}</strong>
                   <p className="reason">{item.reason}</p>
                 </span>
-                <button type="button" className="btn" onClick={() => shift.setPriority(item.dish.dishId, true, actor)}>
+                <button type="button" className="btn" onClick={() => void run(() => client.shiftPriority(item.dish.dishId, true), `${item.dish.dishName} в приоритете`)}>
                   В приоритет
                 </button>
               </div>
@@ -131,7 +165,8 @@ export function KitchenPage() {
           </div>
         </Panel>
       ) : null}
-      {visible.length === 0 ? <Empty>Нет блюд в этом фильтре.</Empty> : (
+      {stop.isLoading ? <p>Загрузка смены…</p> : null}
+      {visible.length === 0 && !stop.isLoading ? <Empty>Нет блюд в этом фильтре.</Empty> : (
         <div className="tiles tiles-shift">
           {visible.map((entry) => (
             <DishTile
@@ -146,14 +181,17 @@ export function KitchenPage() {
         </div>
       )}
       <Panel title="Использовать первым">
-        {shift.batches.length === 0 ? <Empty>Нет коротких и вскрытых партий.</Empty> : (
+        {(kitchen.data?.batches.length ?? 0) === 0 ? <Empty>Нет коротких и вскрытых партий.</Empty> : (
           <div className="stack">
-            {shift.batches.map((batch) => (
+            {kitchen.data?.batches.map((batch) => (
               <button
                 key={batch.batchId}
                 type="button"
-                className={batch.opened ? "batch-row is-open" : "batch-row"}
-                onClick={() => shift.toggleOpened(batch.batchId)}
+                className={batch.openedAt ? "batch-row is-open" : "batch-row"}
+                onClick={() => void run(
+                  () => client.markBatch(batch.batchId, true, batch.note ?? "", null),
+                  batch.openedAt ? `${batch.productName} уже вскрыта` : `${batch.productName}: вскрыли`,
+                )}
               >
                 <span>
                   <strong>{batch.productName}</strong>
@@ -161,7 +199,7 @@ export function KitchenPage() {
                     {batch.deliveryNumber} · {formatQty(batch.remaining, batch.unit)} · {formatHours(batch.hoursLeft)}
                   </p>
                 </span>
-                <span className={batch.opened ? "pill pill-low" : "pill"}>{batch.opened ? "вскрыта" : "вскрыть"}</span>
+                <span className={batch.openedAt ? "pill pill-low" : "pill"}>{batch.openedAt ? "вскрыта" : "вскрыть"}</span>
               </button>
             ))}
           </div>
@@ -170,42 +208,190 @@ export function KitchenPage() {
       {open ? (
         <ShiftSheet
           dish={open}
-          events={shift.history.filter((event) => event.dishId === open.dishId).slice(0, 8)}
+          dishes={dishes}
           onClose={() => setOpenId(null)}
-          onPortions={(delta) => shift.changePortions(open.dishId, delta, actor)}
-          onStop={(reason) => shift.stop(open.dishId, reason, actor)}
-          onResume={() => shift.resume(open.dishId, actor)}
-          onPriority={() => shift.setPriority(open.dishId, !open.isPriority, actor)}
+          onPortions={(delta) => void run(() => client.shiftPortions(open.dishId, delta), `${open.dishName}: порции ${delta > 0 ? "+" : ""}${delta}`)}
+          onStop={(reason) => void run(() => client.shiftStop(open.dishId, reason, ""), `${open.dishName} в стопе`)}
+          onResume={() => void run(() => client.shiftResume(open.dishId), `${open.dishName}: стоп снят`)}
+          onPriority={() => void run(() => client.shiftPriority(open.dishId, !open.isPriority), open.isPriority ? "Убрали из приоритета" : "В приоритете")}
         />
       ) : null}
       {wasteOpen ? (
         <WasteSheet
           onClose={() => setWasteOpen(false)}
-          onDone={(text) => { setWasteOpen(false); shift.noteWaste(text); }}
+          onDone={async (reason, items) => {
+            await client.createWriteOff({ reason, items });
+            setWasteOpen(false);
+            setHint("Акт списания проведён");
+            await refresh();
+          }}
         />
       ) : null}
     </>
   );
 }
 
+type SpeechResult = {
+  readonly results: ArrayLike<ArrayLike<{ transcript: string }>>;
+};
+
+type SpeechEngine = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechResult) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  abort: () => void;
+};
+
+function speechEngine() {
+  const host = window as Window & {
+    SpeechRecognition?: new () => SpeechEngine;
+    webkitSpeechRecognition?: new () => SpeechEngine;
+  };
+  return host.SpeechRecognition ?? host.webkitSpeechRecognition ?? null;
+}
+
+function PortionVoice({
+  dish,
+  dishes,
+  onConfirm,
+}: {
+  dish: StopEntry;
+  dishes: StopEntry[];
+  onConfirm: (delta: number) => void;
+}) {
+  const [listening, setListening] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [proposal, setProposal] = useState<PortionProposal | null>(null);
+  const engine = useRef<SpeechEngine | null>(null);
+
+  useEffect(() => {
+    setProposal(null);
+    setDraft("");
+    return () => engine.current?.abort();
+  }, [dish.dishId]);
+
+  function consider(heard: string) {
+    setProposal(parsePortionPhrase(heard, dishes, dish.dishId));
+  }
+
+  function listen() {
+    const Ctor = speechEngine();
+    if (!Ctor) {
+      setProposal({ ok: false, heard: "", reason: "Браузер не слышит микрофон. Напишите фразу — она тоже не применится сама." });
+      return;
+    }
+    engine.current?.abort();
+    const rec = new Ctor();
+    rec.lang = "ru-RU";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (event) => {
+      const heard = event.results[0]?.[0]?.transcript ?? "";
+      setDraft(heard);
+      consider(heard);
+    };
+    rec.onerror = () => {
+      setListening(false);
+      setProposal({ ok: false, heard: draft, reason: "Микрофон не ответил. Ничего не изменил." });
+    };
+    rec.onend = () => setListening(false);
+    engine.current = rec;
+    setListening(true);
+    setProposal(null);
+    rec.start();
+  }
+
+  function confirm() {
+    if (!proposal?.ok || !proposal.matchesOpen) return;
+    onConfirm(proposal.delta);
+    setProposal(null);
+    setDraft("");
+  }
+
+  return (
+    <div className="voice-box">
+      <div className="voice-row">
+        <button type="button" className={listening ? "btn" : "btn-ghost"} aria-pressed={listening} onClick={listen}>
+          {listening ? "Слушаю…" : "Микрофон"}
+        </button>
+        <input
+          value={draft}
+          placeholder="паста плюс 3"
+          aria-label="Фраза для порций"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              consider(draft);
+            }
+          }}
+        />
+        <button type="button" className="btn-ghost" onClick={() => consider(draft)} disabled={!draft.trim()}>
+          Разобрать
+        </button>
+      </div>
+      <p className="reason">Фраза только собирает чип. Порции заготовки меняются после «Подтвердить». Это не приход на склад.</p>
+      {proposal ? (
+        <div className={proposal.ok && proposal.matchesOpen ? "voice-chip" : "voice-chip is-bad"} role="status">
+          {proposal.ok ? (
+            <>
+              <strong>{proposal.dishName} {proposal.delta > 0 ? "+" : ""}{proposal.delta}</strong>
+              {proposal.heard ? <p className="reason">Услышали: «{proposal.heard}»</p> : null}
+              {proposal.matchesOpen ? (
+                <div className="btn-row">
+                  <button type="button" className="btn" onClick={confirm}>Подтвердить</button>
+                  <button type="button" className="btn-ghost" onClick={() => setProposal(null)}>Не то</button>
+                </div>
+              ) : (
+                <>
+                  <p className="reason">Открыта плитка «{dish.dishName}». Чужое блюдо фразой не двигаю.</p>
+                  <button type="button" className="btn-ghost" onClick={() => setProposal(null)}>Закрыть</button>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <strong>Не разобрал</strong>
+              <p className="reason">{proposal.reason}</p>
+              {proposal.heard ? <p className="reason">Услышали: «{proposal.heard}»</p> : null}
+              <button type="button" className="btn-ghost" onClick={() => setProposal(null)}>Закрыть</button>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ShiftSheet({
   dish,
-  events,
+  dishes,
   onClose,
   onPortions,
   onStop,
   onResume,
   onPriority,
 }: {
-  dish: ShiftDish;
-  events: { id: string; at: string; actor: string; text: string }[];
+  dish: StopEntry;
+  dishes: StopEntry[];
   onClose: () => void;
   onPortions: (delta: number) => void;
   onStop: (reason: StopReason) => void;
   onResume: () => void;
   onPriority: () => void;
 }) {
-  const canResume = dish.isStopped && dish.portionsPossible > 0;
+  const { client } = useSession();
+  const history = useQuery({
+    queryKey: ["shift-history", dish.dishId],
+    queryFn: () => client.shiftHistory(dish.dishId),
+  });
+  const events = (history.data ?? []).slice(0, 8);
+  const canResume = dish.isStopped && dish.hasLimit && dish.portionsPossible > 0;
+  const qty = dish.isStopped ? "0" : dish.hasLimit ? String(dish.portionsPossible) : "∞";
   return (
     <div className="modal-back" onClick={onClose}>
       <div className="shift-sheet" role="dialog" aria-labelledby="shift-dish" onClick={(event) => event.stopPropagation()}>
@@ -213,7 +399,7 @@ function ShiftSheet({
           <p className="chip-label">Плитка смены</p>
           <h2 id="shift-dish">{dish.dishName}</h2>
           <p className="reason">
-            {dish.isStopped ? "Стоп — зал не берёт." : `${dish.portionsPossible} порц. на заготовке.`}
+            {dish.isStopped ? "Стоп — зал не берёт." : dish.hasLimit ? `${dish.portionsPossible} порц. на заготовке.` : "Лимит заготовки ещё не задан."}
             {dish.isPriority && !dish.isStopped ? " Приоритет для зала." : ""}
           </p>
           {dish.isCandidate && !dish.isStopped ? (
@@ -222,7 +408,7 @@ function ShiftSheet({
         </div>
         <div className="shift-stepper">
           <button type="button" className="btn-ghost" onClick={() => onPortions(-1)} aria-label="Минус порция">−</button>
-          <strong>{dish.isStopped ? 0 : dish.portionsPossible}</strong>
+          <strong>{qty}</strong>
           <button type="button" className="btn-ghost" onClick={() => onPortions(1)} aria-label="Плюс порция">+</button>
         </div>
         <div className="shift-jumps">
@@ -232,6 +418,7 @@ function ShiftSheet({
           <button type="button" className="btn-ghost" onClick={() => onPortions(-5)}>−5</button>
         </div>
         <p className="reason">+3 / +5 после доготовки противня. Это не приход на склад. 0 порций = стоп.</p>
+        <PortionVoice dish={dish} dishes={dishes} onConfirm={onPortions} />
         <button
           type="button"
           className={dish.isPriority ? "btn-ghost" : "btn"}
@@ -260,10 +447,10 @@ function ShiftSheet({
           <p className="chip-label">История</p>
           {events.length === 0 ? <p className="reason">Пока пусто.</p> : (
             <div className="shift-history">
-              {events.map((event) => (
+              {events.map((event: ShiftHistoryEntry) => (
                 <article key={event.id}>
                   <strong>{event.text}</strong>
-                  <p className="reason">{event.actor} · {formatWhen(event.at)}</p>
+                  <p className="reason">{event.actorLogin} · {formatWhen(event.at)}</p>
                 </article>
               ))}
             </div>
@@ -275,10 +462,36 @@ function ShiftSheet({
   );
 }
 
-function WasteSheet({ onClose, onDone }: { onClose: () => void; onDone: (text: string) => void }) {
-  const [reason, setReason] = useState<(typeof WASTE_REASONS)[number]["id"] | null>(null);
-  const [qty, setQty] = useState<Record<string, number>>({});
-  const picked = Object.entries(qty).filter(([, value]) => value > 0);
+function WasteSheet({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: (reason: WriteOffReason, items: { productId: string; quantity: number }[]) => Promise<void>;
+}) {
+  const { client } = useSession();
+  const products = useQuery({ queryKey: ["products"], queryFn: () => client.products() });
+  const [reason, setReason] = useState<WriteOffReason | null>(null);
+  const [qty, setQty] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const active = (products.data ?? []).filter((product: Product) => product.isActive);
+  const picked = active
+    .map((product) => ({ productId: product.id, quantity: Number(qty[product.id] ?? "") }))
+    .filter((item) => item.quantity > 0);
+
+  async function submit() {
+    if (!reason || picked.length === 0) return;
+    setPending(true);
+    setError(null);
+    try {
+      await onDone(reason, picked);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Акт не проведён");
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
     <div className="modal-back" onClick={onClose}>
@@ -286,7 +499,7 @@ function WasteSheet({ onClose, onDone }: { onClose: () => void; onDone: (text: s
         <div>
           <p className="chip-label">Акт списания</p>
           <h2 id="waste-title">{reason ? "Что списать" : "Сначала причина"}</h2>
-          <p className="reason">Заглушка: на склад не уйдёт, пока нет API.</p>
+          <p className="reason">Количество в единицах склада. Без партии спишется по FEFO.</p>
         </div>
         {!reason ? (
           <div className="shift-reasons">
@@ -298,22 +511,19 @@ function WasteSheet({ onClose, onDone }: { onClose: () => void; onDone: (text: s
           </div>
         ) : (
           <div className="stack">
-            {demoWasteProducts.map((product) => (
-              <div key={product.productId} className="waste-line">
+            {active.map((product) => (
+              <label key={product.id} className="waste-line">
                 <strong>{product.name}</strong>
-                <div className="stepper">
-                  <button type="button" onClick={() => setQty((current) => ({ ...current, [product.productId]: Math.max(0, (current[product.productId] ?? 0) - 1) }))}>−</button>
-                  <span>{qty[product.productId] ?? 0}</span>
-                  <button type="button" onClick={() => setQty((current) => ({ ...current, [product.productId]: (current[product.productId] ?? 0) + 1 }))}>+</button>
-                </div>
-              </div>
+                <input
+                  inputMode="decimal"
+                  value={qty[product.id] ?? ""}
+                  placeholder="0"
+                  onChange={(event) => setQty((current) => ({ ...current, [product.id]: event.target.value }))}
+                />
+              </label>
             ))}
-            <button
-              type="button"
-              className="btn"
-              disabled={picked.length === 0}
-              onClick={() => onDone(`Списано (${WASTE_REASONS.find((item) => item.id === reason)?.label}): ${picked.length} поз. Без склада.`)}
-            >
+            {error ? <p className="error-text">{error}</p> : null}
+            <button type="button" className="btn" disabled={picked.length === 0 || pending} onClick={() => void submit()}>
               Списать
             </button>
             <button type="button" className="text-btn" onClick={() => setReason(null)}>Другая причина</button>

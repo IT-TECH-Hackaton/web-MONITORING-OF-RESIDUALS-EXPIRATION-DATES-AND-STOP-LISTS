@@ -2,6 +2,7 @@ using Monitoring.Infrastructure.Services;
 
 namespace Monitoring.Api.Live;
 
+/// <summary>Раз в Expiry:IntervalSeconds вызывает списание просрочки. В тестах выключен флагом Expiry:Enabled.</summary>
 public sealed class ExpiryWorker(IServiceScopeFactory scopes, IConfiguration configuration, ILogger<ExpiryWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -5,10 +5,12 @@ using Monitoring.Core.Time;
 
 namespace Monitoring.Infrastructure.Services;
 
+/// <summary>QR поставки и QR заявки на закупку. Заявка склад не увеличивает.</summary>
 public sealed class QrIntakeService(IClock clock, DeliveryService deliveries, StockReadModel stock)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Учебный QR. valid false — сертификат заведомо плохой, приёмка должна отказать.</summary>
     public string Sample(bool valid)
     {
         var now = clock.UtcNow;
@@ -33,6 +35,7 @@ public sealed class QrIntakeService(IClock clock, DeliveryService deliveries, St
         return JsonSerializer.Serialize(document, Json);
     }
 
+    /// <summary>Вход: необязательный список продуктов. Выход: номер заявки и строка QR. Партии не создаёт.</summary>
     public async Task<ServiceResult<PurchaseDraft>> PurchaseRequestAsync(
         IReadOnlyList<Guid>? productIds,
         CancellationToken cancellationToken)
@@ -80,6 +83,10 @@ public sealed class QrIntakeService(IClock clock, DeliveryService deliveries, St
         return JsonSerializer.Serialize(document, Json);
     }
 
+    /// <summary>
+    /// Вход: строка QR. Проверяет сертификат каждой строки.
+    /// Выход: вердикт по строкам и поставка, если всё годное. Иначе склад не меняется.
+    /// </summary>
     public async Task<ServiceResult<QrIntakeResult>> ScanAsync(string? payload, CancellationToken cancellationToken)
     {
         DeliveryQrDocument? document;

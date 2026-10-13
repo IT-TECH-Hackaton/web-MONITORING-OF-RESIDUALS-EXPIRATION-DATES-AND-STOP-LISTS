@@ -1,5 +1,6 @@
 namespace Monitoring.Core;
 
+/// <summary>Сутки до срока — «истекает». Момент истечения и статус Expired — «просрочено». Пустой остаток — Empty.</summary>
 public static class FreshnessRules
 {
     public const double WarningHours = 24;

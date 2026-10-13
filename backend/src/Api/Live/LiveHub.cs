@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace Monitoring.Api.Live;
 
+/// <summary>Хаб /hubs/live. Токен в query access_token. Подключившийся попадает в группу live и слушает склад, стоп и смену.</summary>
 [Authorize]
 public sealed class LiveHub : Hub
 {

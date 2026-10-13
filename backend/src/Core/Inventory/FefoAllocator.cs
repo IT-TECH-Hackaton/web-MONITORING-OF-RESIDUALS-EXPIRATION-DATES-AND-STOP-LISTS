@@ -27,8 +27,16 @@ public sealed record FefoOutcome(
     public static FefoOutcome Failed(IReadOnlyList<Shortage> shortages) => new(false, [], shortages);
 }
 
+/// <summary>
+/// Списание «раньше истекает — раньше уходит». Сам склад не меняет: только говорит, из каких партий взять.
+/// </summary>
 public static class FefoAllocator
 {
+    /// <summary>
+    /// Вход: сколько нужно по продуктам, живые партии и текущее время.
+    /// Выход: успех и строки списания либо список нехватки. Просроченные и пустые партии не берёт.
+    /// При нехватке хотя бы одного продукта не возвращает частичное списание.
+    /// </summary>
     public static FefoOutcome TryAllocate(
         IReadOnlyList<ProductRequirement> requirements,
         IReadOnlyList<BatchSlice> batches,

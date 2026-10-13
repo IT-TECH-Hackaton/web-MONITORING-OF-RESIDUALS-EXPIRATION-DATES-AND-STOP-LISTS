@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 export const LOW_PORTIONS = 5;
 
 export function isLow(entry: StopEntry) {
-  return !entry.isStopped && entry.portionsPossible > 0 && entry.portionsPossible <= LOW_PORTIONS;
+  if (entry.isLow != null) return entry.isLow;
+  return !entry.isStopped && entry.hasLimit !== false && entry.portionsPossible > 0 && entry.portionsPossible <= LOW_PORTIONS;
 }
 
 export function StatusPill({ entry }: { entry: StopEntry }) {
@@ -35,9 +36,9 @@ export function DishTile({
   ].filter(Boolean).join(" ");
   const inner = (
     <>
-      <span className="qty">{entry.isStopped ? "0" : entry.portionsPossible}</span>
+      <span className="qty">{entry.isStopped ? "0" : entry.hasLimit === false ? "∞" : entry.portionsPossible}</span>
       <strong>{entry.dishName}</strong>
-      {showReason && entry.reason ? <p className="reason">{entry.reason}</p> : null}
+      {showReason && (entry.reason || entry.candidateReason) ? <p className="reason">{entry.reason ?? entry.candidateReason}</p> : null}
       <div className="btn-row">
         <StatusPill entry={entry} />
         {candidate && !entry.isStopped ? <span className="pill pill-low">кандидат</span> : null}

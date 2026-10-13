@@ -8,8 +8,15 @@ using Monitoring.Infrastructure.Persistence;
 
 namespace Monitoring.Infrastructure.Services;
 
-public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel readModel, StockBroadcaster broadcaster)
+/// <summary>Приём заказа: проверка стопа и лимита, затем FEFO по складу и минус порции заготовки.</summary>
+public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel readModel, StockBroadcaster broadcaster, ShiftService shift)
 {
+    /// <summary>
+    /// Вход: id, автор, строки, стол. Официант без стола — ошибка, склад не трогаем.
+    /// Повтор того же id возвращает уже записанный заказ.
+    /// Стоп или порций больше лимита — отказ 409, партии не меняются.
+    /// Иначе списывает партии раньше срока и уменьшает prepPortions. Ноль порций ставит стоп OutOfProduct.
+    /// </summary>
     public async Task<OrderPlacement> PlaceAsync(PlaceOrderCommand command, CancellationToken cancellationToken)
     {
         var replay = await readModel.OrderAsync(command.Id, cancellationToken);
@@ -23,6 +30,11 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
         if (command.Items.Count == 0)
         {
             return OrderPlacement.Invalid("В заказе нет блюд.");
+        }
+
+        if (command.RequireTable && string.IsNullOrWhiteSpace(command.TableNumber))
+        {
+            return OrderPlacement.Invalid("Укажите номер стола.");
         }
 
         var portions = command.Items
@@ -73,6 +85,47 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
             .ToListAsync(cancellationToken);
 
         var now = clock.UtcNow;
+        var order = new CustomerOrder
+        {
+            Id = command.Id,
+            CreatedAt = now,
+            CreatedBy = command.CreatedBy,
+            TableNumber = string.IsNullOrWhiteSpace(command.TableNumber) ? null : command.TableNumber.Trim(),
+            Items = portions.Select(line => new OrderItem
+            {
+                Id = Guid.NewGuid(),
+                DishId = line.DishId,
+                Portions = line.Portions,
+                KitchenStatus = KitchenStatus.Queued,
+            }).ToList(),
+        };
+        var shiftRows = await db.ShiftDishes.Where(row => dishIds.Contains(row.DishId)).ToListAsync(cancellationToken);
+        var blocks = new List<string>();
+        foreach (var line in portions)
+        {
+            var state = shiftRows.FirstOrDefault(row => row.DishId == line.DishId);
+            var name = dishes.Single(candidate => candidate.Id == line.DishId).Name;
+            if (state?.IsStopped == true || state?.PrepPortions == 0)
+            {
+                blocks.Add($"{name}: стоп");
+            }
+            else if (state?.PrepPortions is int prep && line.Portions > prep)
+            {
+                blocks.Add($"{name}: на заготовке {prep}, в заказе {line.Portions}");
+            }
+        }
+
+        if (blocks.Count > 0)
+        {
+            order.Status = OrderStatus.Rejected;
+            order.RejectionReason = string.Join("; ", blocks);
+            db.Orders.Add(order);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            var rejectedShift = await readModel.OrderAsync(order.Id, cancellationToken);
+            return OrderPlacement.Rejected(rejectedShift!, true);
+        }
+
         var outcome = FefoAllocator.TryAllocate(
             requirements,
             locked.Select(batch => new BatchSlice(
@@ -83,20 +136,6 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
                 batch.ReceivedAt,
                 batch.Status)).ToList(),
             now);
-
-        var order = new CustomerOrder
-        {
-            Id = command.Id,
-            CreatedAt = now,
-            CreatedBy = command.CreatedBy,
-            Items = portions.Select(line => new OrderItem
-            {
-                Id = Guid.NewGuid(),
-                DishId = line.DishId,
-                Portions = line.Portions,
-                KitchenStatus = KitchenStatus.Queued,
-            }).ToList(),
-        };
 
         if (!outcome.Success)
         {
@@ -163,6 +202,7 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
         }
 
         order.Status = OrderStatus.Accepted;
+        await shift.ApplyOrderPortionsAsync(portions.Select(line => (line.DishId, line.Portions)).ToList(), cancellationToken);
         db.Orders.Add(order);
         try
         {

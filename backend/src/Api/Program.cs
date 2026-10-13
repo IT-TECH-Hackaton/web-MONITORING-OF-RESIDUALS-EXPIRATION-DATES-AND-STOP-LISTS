@@ -3,8 +3,8 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
 using Monitoring.Api;
+using Monitoring.Api.Swagger;
 using Monitoring.Api.Auth;
 using Monitoring.Api.Live;
 using Monitoring.Core;
@@ -66,6 +66,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             },
         };
     });
+// Manager — только менеджер. Kitchen — менеджер и кухня. Orders — менеджер и официант. Staff — все три.
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("Manager", policy => policy.RequireRole(nameof(UserRole.Manager)));
@@ -77,22 +78,7 @@ builder.Services.AddSignalR().AddJsonProtocol(options =>
 {
     options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "Мониторинг остатков", Version = "v1" });
-    var scheme = new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" },
-    };
-    options.AddSecurityDefinition("Bearer", scheme);
-    options.AddSecurityRequirement(new OpenApiSecurityRequirement { [scheme] = [] });
-});
+builder.Services.AddMonitoringSwagger();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("clients", policy =>
@@ -110,20 +96,24 @@ if (builder.Configuration.GetValue("Expiry:Enabled", true))
 var app = builder.Build();
 await app.Services.MigrateAndSeedAsync();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+app.UseMonitoringSwagger();
 app.UseCors("clients");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health", () => Results.Ok(new HealthResponse("ok")))
+    .Docs("Служебное", "Жив ли процесс", "Без токена. Выход: status = ok. Базу не проверяет.")
+    .Ok<HealthResponse>();
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapDeliveryEndpoints();
 app.MapStockEndpoints();
 app.MapOrderEndpoints();
 app.MapKitchenEndpoints();
+app.MapShiftEndpoints();
+app.MapWriteOffEndpoints();
 app.MapAnalyticsEndpoints();
+app.MapReportEndpoints();
 app.MapSimulatorEndpoints();
 app.MapHub<LiveHub>("/hubs/live");
 

@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { SessionProvider } from "./session";
 import { ThemeProvider } from "./theme";
+import "./tailwind.css";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -16,7 +17,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <SessionProvider>
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <App />
           </BrowserRouter>
         </SessionProvider>

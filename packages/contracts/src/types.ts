@@ -39,6 +39,7 @@ export type Order = {
   rejectionReason: string | null;
   items: OrderLine[];
   shortages: Shortage[];
+  tableNumber: string | null;
 };
 
 export type Batch = {
@@ -99,6 +100,18 @@ export type StockItem = {
   nearestExpiry: string | null;
   hoursLeft: number | null;
   freshness: Freshness;
+  purchasePrice: number;
+};
+
+export type MoneyReport = {
+  purchaseRub: number;
+  revenueRub: number;
+  costRub: number;
+  wasteRub: number;
+  netRub: number;
+  staff: { name: string; role: string; purchaseRub: number; deliveries: number; salesRub: number; orders: number }[];
+  purchases: { productId: string; productName: string; unit: Unit; quantity: number; rub: number }[];
+  dishes: { dishName: string; salePrice: number; portions: number; revenueRub: number; costRub: number; netRub: number }[];
 };
 
 export type Product = {
@@ -106,6 +119,7 @@ export type Product = {
   name: string;
   unit: Unit;
   isActive: boolean;
+  purchasePrice: number;
 };
 
 export type DishIngredient = {
@@ -120,14 +134,31 @@ export type Dish = {
   name: string;
   isActive: boolean;
   ingredients: DishIngredient[];
+  salePrice: number;
 };
+
+export type StopReason = "OutOfProduct" | "Waste" | "Quality" | "WontMakeIt" | "Equipment";
 
 export type StopEntry = {
   dishId: string;
   dishName: string;
   portionsPossible: number;
   isStopped: boolean;
+  isCandidate: boolean;
+  isLow: boolean;
+  isPriority: boolean;
   reason: string | null;
+  candidateReason: string | null;
+  stopReason: StopReason | null;
+  hasLimit: boolean;
+};
+
+export type ShiftHistoryEntry = {
+  id: string;
+  dishId: string;
+  at: string;
+  actorLogin: string;
+  text: string;
 };
 
 export type HotOffer = {
@@ -138,6 +169,7 @@ export type HotOffer = {
 };
 
 export type ExpiryTotal = {
+  productId: string;
   productName: string;
   unit: Unit;
   quantity: number;
@@ -185,7 +217,6 @@ export type KitchenBatchCard = {
 };
 
 export type KitchenBoard = {
-  orders: Order[];
   batches: KitchenBatchCard[];
 };
 
@@ -203,8 +234,11 @@ export type WriteOff = {
   productName: string;
   unit: Unit;
   type: MovementType;
+  reason: string | null;
   quantity: number;
 };
+
+export type WriteOffReason = "Expiry" | "Waste" | "Spoilage" | "Training" | "StaffMeal";
 
 export type Deficit = {
   productId: string;

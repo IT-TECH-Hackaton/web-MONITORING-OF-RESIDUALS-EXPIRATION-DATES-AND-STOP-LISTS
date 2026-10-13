@@ -88,6 +88,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("status");
 
+                    b.Property<decimal>("UnitCost")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasColumnName("unit_cost");
+
                     b.HasKey("Id")
                         .HasName("pk_batches");
 
@@ -131,6 +136,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("status");
 
+                    b.Property<string>("TableNumber")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("table_number");
+
                     b.HasKey("Id")
                         .HasName("pk_orders");
 
@@ -157,6 +167,10 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("number");
 
+                    b.Property<Guid?>("ReceivedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("received_by");
+
                     b.Property<string>("Supplier")
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)")
@@ -164,6 +178,9 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_deliveries");
+
+                    b.HasIndex("ReceivedBy")
+                        .HasDatabaseName("ix_deliveries_received_by");
 
                     b.ToTable("deliveries", (string)null);
                 });
@@ -184,6 +201,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)")
                         .HasColumnName("name");
+
+                    b.Property<decimal>("SalePrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("sale_price");
 
                     b.HasKey("Id")
                         .HasName("pk_dishes");
@@ -318,6 +340,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(160)")
                         .HasColumnName("name");
 
+                    b.Property<decimal>("PurchasePrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasColumnName("purchase_price");
+
                     b.Property<string>("Unit")
                         .IsRequired()
                         .HasMaxLength(8)
@@ -328,6 +355,84 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasName("pk_products");
 
                     b.ToTable("products", (string)null);
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftDish", b =>
+                {
+                    b.Property<Guid>("DishId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("dish_id");
+
+                    b.Property<bool>("IsPriority")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_priority");
+
+                    b.Property<bool>("IsStopped")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_stopped");
+
+                    b.Property<int?>("PrepPortions")
+                        .HasColumnType("integer")
+                        .HasColumnName("prep_portions");
+
+                    b.Property<string>("StopNote")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("stop_note");
+
+                    b.Property<string>("StopReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("stop_reason");
+
+                    b.Property<DateTime?>("StoppedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("stopped_at");
+
+                    b.Property<Guid?>("StoppedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("stopped_by");
+
+                    b.HasKey("DishId")
+                        .HasName("pk_shift_dishes");
+
+                    b.ToTable("shift_dishes", (string)null);
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorLogin")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("actor_login");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("at");
+
+                    b.Property<Guid>("DishId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("dish_id");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("text");
+
+                    b.HasKey("Id")
+                        .HasName("pk_shift_history");
+
+                    b.HasIndex("DishId")
+                        .HasDatabaseName("ix_shift_history_dish_id");
+
+                    b.ToTable("shift_history", (string)null);
                 });
 
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.StockMovement", b =>
@@ -353,6 +458,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)")
                         .HasColumnName("quantity");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("reason");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -381,6 +491,12 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("display_name");
 
                     b.Property<string>("Login")
                         .IsRequired()
@@ -441,6 +557,16 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_orders_users_created_by");
 
                     b.Navigation("CreatedByUser");
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.Delivery", b =>
+                {
+                    b.HasOne("Monitoring.Infrastructure.Persistence.UserAccount", "ReceivedByUser")
+                        .WithMany()
+                        .HasForeignKey("ReceivedBy")
+                        .HasConstraintName("fk_deliveries_users_received_by");
+
+                    b.Navigation("ReceivedByUser");
                 });
 
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.DishIngredient", b =>
@@ -504,6 +630,30 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.Navigation("Order");
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftDish", b =>
+                {
+                    b.HasOne("Monitoring.Infrastructure.Persistence.Dish", "Dish")
+                        .WithOne()
+                        .HasForeignKey("Monitoring.Infrastructure.Persistence.ShiftDish", "DishId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_shift_dishes_dishes_dish_id");
+
+                    b.Navigation("Dish");
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftHistory", b =>
+                {
+                    b.HasOne("Monitoring.Infrastructure.Persistence.Dish", "Dish")
+                        .WithMany()
+                        .HasForeignKey("DishId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_shift_history_dishes_dish_id");
+
+                    b.Navigation("Dish");
                 });
 
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.StockMovement", b =>

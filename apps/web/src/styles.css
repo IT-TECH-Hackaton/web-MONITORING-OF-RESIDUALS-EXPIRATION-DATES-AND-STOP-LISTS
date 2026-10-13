@@ -250,6 +250,22 @@ input, select {
   border: 1px solid var(--line);
 }
 .login-card h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.03em; font-weight: 650; }
+.password-field { position: relative; display: block; }
+.password-field input { padding-right: 92px; }
+.password-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 650;
+  min-height: 32px;
+  padding: 0 8px;
+}
+.password-toggle:hover { color: var(--ink); }
 .login-card .btn { width: 100%; }
 .bar { height: 6px; background: var(--paper); border-radius: 999px; overflow: hidden; margin-top: 8px; }
 .bar span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
@@ -343,6 +359,44 @@ html.dark .chip-stop { background: #2a2a28; }
 .floor-search { display: grid; gap: 6px; margin: 4px 0 8px; position: sticky; top: 0; z-index: 3; background: var(--paper); padding-bottom: 4px; }
 .floor-search input { min-height: 48px; font-size: 16px; }
 .note-add { width: 100%; min-height: 44px; margin-bottom: 12px; }
+.floor-mic { display: grid; justify-items: center; gap: 8px; margin: 12px 0; }
+.floor-mic-btn {
+  width: 88px;
+  height: 88px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 0 0 1px var(--line);
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.floor-mic-btn:hover { box-shadow: 0 0 0 1px var(--accent); }
+.floor-mic-core {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.floor-mic-btn.is-on { background: var(--accent); box-shadow: none; }
+.floor-mic-btn.is-on .floor-mic-core {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #fff;
+}
+.floor-mic-btn.is-on::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  animation: floor-mic-pulse 1.4s ease-out infinite;
+}
+@keyframes floor-mic-pulse {
+  to { transform: scale(1.2); opacity: 0; }
+}
+.floor-transcript { margin: 0 0 8px; white-space: pre-wrap; }
 .suggest { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .suggest-item {
   width: 100%;
@@ -488,6 +542,21 @@ html.dark .suggest-item.is-stop { background: #2a2a28; }
 }
 .shift-stepper button { min-height: 52px; min-width: 52px; font-size: 24px; }
 .shift-stepper strong { text-align: center; font-size: 28px; font-variant-numeric: tabular-nums; }
+.voice-box { display: grid; gap: 8px; }
+.voice-row { display: flex; gap: 8px; align-items: center; }
+.voice-row .btn-ghost { min-height: 48px; min-width: 48px; }
+.voice-row input { flex: 1; min-height: 48px; }
+.voice-chip {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--amber);
+  background: var(--card);
+}
+.voice-chip.is-bad { border-color: var(--rose); }
+.voice-chip .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.voice-chip .btn, .voice-chip .btn-ghost { min-height: 48px; }
 .shift-reasons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .shift-reasons button,
 .shift-sheet > .btn,
@@ -527,6 +596,37 @@ html.dark .suggest-item.is-stop { background: #2a2a28; }
   .main { padding: 16px 14px 36px; }
   .page-title { align-items: flex-start; flex-direction: column; }
   .page-title h1 { font-size: 20px; }
+}
+.print-only { display: none; }
+@media print {
+  [data-slot="sidebar"],
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"],
+  [data-slot="sidebar-rail"],
+  [data-slot="sidebar-inset"] > header,
+  .no-print { display: none !important; }
+  .print-only { display: block; }
+  html, body,
+  [data-slot="sidebar-wrapper"],
+  [data-slot="sidebar-inset"],
+  .main,
+  .split,
+  .panel {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    width: auto !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
+  .main { padding: 0 !important; }
+  .panel { border: 1px solid #ccc !important; margin-bottom: 12px !important; padding: 8px !important; }
+  .stat { background: #fff !important; color: #111 !important; }
+  table { min-width: 0 !important; width: 100% !important; break-inside: auto; }
+  th, td, h1, h2, p, strong, span { color: #111 !important; }
+  @page { margin: 12mm; }
 }
 @media (max-width: 420px) {
   .tiles-floor { grid-template-columns: 1fr 1fr; }

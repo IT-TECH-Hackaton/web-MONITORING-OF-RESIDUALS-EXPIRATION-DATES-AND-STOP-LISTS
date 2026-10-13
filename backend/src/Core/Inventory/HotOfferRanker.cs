@@ -10,11 +10,16 @@ public sealed record HotBatch(
 
 public sealed record HotOffer(Guid DishId, string DishName, double Score, string Reason);
 
+/// <summary>
+/// Подсказка шефу, что предложить, пока партия не сгорела. Это не список зала и не стоп.
+/// Горизонт 72 часа, слишком слабый балл отбрасывается, наружу не больше 10 блюд.
+/// </summary>
 public static class HotOfferRanker
 {
     public const double HorizonHours = 72;
     private const double ExclusiveBoost = 1.5;
 
+    /// <summary>Вход: рецепты, партии в горизонте, доступный остаток и сейчас. Выход: блюдо, балл и текст причины.</summary>
     public static IReadOnlyList<HotOffer> Rank(
         IReadOnlyList<DishRecipe> dishes,
         IReadOnlyList<HotBatch> batches,

@@ -6,16 +6,19 @@ using Monitoring.Infrastructure.Services;
 
 namespace Monitoring.Api.Auth;
 
+/// <summary>Выдаёт пару токенов. Access живёт недолго и ходит в Authorization. Refresh только на /api/auth/refresh, как access его не принимают.</summary>
 public sealed class JwtTokenService(IConfiguration configuration)
 {
     public const string AccessUse = "access";
     public const string RefreshUse = "refresh";
 
+    /// <summary>Вход: пользователь. Выход: access, refresh и тот же пользователь.</summary>
     public AuthTokens Issue(AuthenticatedUser user)
     {
         return new AuthTokens(Create(user, AccessUse, AccessLifetime), Create(user, RefreshUse, RefreshLifetime), user);
     }
 
+    /// <summary>Вход: refresh-строка. Выход: id и логин или null, если токен битый, протух или это access.</summary>
     public AuthenticatedUser? ReadRefresh(string token)
     {
         try

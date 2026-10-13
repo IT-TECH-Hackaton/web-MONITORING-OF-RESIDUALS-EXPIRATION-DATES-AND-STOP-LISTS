@@ -1,10 +1,9 @@
 import { ApiError, newId, type StopEntry } from "@repo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useCart } from "../cart";
 import { useSession } from "../session";
-import { useShift } from "../shiftStore";
 import { ThemeToggle } from "../theme";
 import { Empty, isLow } from "../ui";
 
@@ -18,12 +17,106 @@ function matches(name: string, query: string) {
   return dishKey(name).includes(needle);
 }
 
-function mergeMenu(api: StopEntry[] | undefined, shift: StopEntry[]): StopEntry[] {
-  const map = new Map<string, StopEntry>();
-  for (const entry of [...(api ?? []), ...shift]) {
-    map.set(dishKey(entry.dishName), entry);
+type SpeechPiece = { readonly isFinal: boolean; readonly 0: { transcript: string } };
+type SpeechEvent = { readonly resultIndex: number; readonly results: ArrayLike<SpeechPiece> };
+type SpeechEngine = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+function speechEngine() {
+  const host = window as Window & {
+    SpeechRecognition?: new () => SpeechEngine;
+    webkitSpeechRecognition?: new () => SpeechEngine;
+  };
+  return host.SpeechRecognition ?? host.webkitSpeechRecognition ?? null;
+}
+
+function FloorListen({ onSave }: { onSave: (text: string) => void }) {
+  const [listening, setListening] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const engine = useRef<SpeechEngine | null>(null);
+  const finalText = useRef("");
+
+  useEffect(() => () => {
+    engine.current?.abort();
+    engine.current = null;
+  }, []);
+
+  function stop() {
+    engine.current?.stop();
+    setListening(false);
   }
-  return [...map.values()];
+
+  function start() {
+    const Ctor = speechEngine();
+    if (!Ctor) {
+      setError("Этот браузер не слышит речь. Заметку можно набрать вручную.");
+      return;
+    }
+    engine.current?.abort();
+    const rec = new Ctor();
+    rec.lang = "ru-RU";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (event) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const piece = event.results[index][0].transcript;
+        if (event.results[index].isFinal) finalText.current = `${finalText.current} ${piece}`.trim();
+        else interim += piece;
+      }
+      setText(`${finalText.current} ${interim}`.trim());
+    };
+    rec.onerror = (event) => {
+      if (event.error === "aborted" || event.error === "no-speech") return;
+      setError("Микрофон не ответил.");
+      setListening(false);
+    };
+    rec.onend = () => setListening(false);
+    engine.current = rec;
+    setError(null);
+    setListening(true);
+    rec.start();
+  }
+
+  function save() {
+    const note = (finalText.current || text).trim();
+    if (!note) return;
+    stop();
+    onSave(note);
+    finalText.current = "";
+    setText("");
+  }
+
+  return (
+    <section className="floor-mic" aria-label="Расшифровка разговора">
+      <button
+        type="button"
+        className={listening ? "floor-mic-btn is-on" : "floor-mic-btn"}
+        aria-pressed={listening}
+        aria-label={listening ? "Остановить запись" : "Слушать разговор"}
+        onClick={listening ? stop : start}
+      >
+        <span className="floor-mic-core" />
+      </button>
+      <span className="chip-label">{listening ? "Стоп" : "Слушать"}</span>
+      {error ? <p className="error-text">{error}</p> : null}
+      {listening && !text ? <p className="reason">Слушаю…</p> : null}
+      {text ? <p className="reason floor-transcript">{text}</p> : null}
+      {text ? (
+        <button type="button" className="btn-ghost note-add" onClick={save}>В заметку</button>
+      ) : null}
+    </section>
+  );
 }
 
 export function FloorShell() {
@@ -58,13 +151,12 @@ export function FloorShell() {
 export function FloorMenuPage() {
   const { client } = useSession();
   const cart = useCart();
-  const shift = useShift();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const [query, setQuery] = useState("");
   const [hint, setHint] = useState<string | null>(null);
-  const dishes = useMemo(() => mergeMenu(stop.data, shift.dishes), [stop.data, shift.dishes]);
-  const stopped = shift.dishes.filter((entry) => entry.isStopped);
-  const priority = shift.dishes.filter((entry) => entry.isPriority && !entry.isStopped);
+  const dishes = stop.data ?? [];
+  const stopped = dishes.filter((entry) => entry.isStopped);
+  const priority = dishes.filter((entry) => entry.isPriority && !entry.isStopped);
   const hotKeys = useMemo(() => new Set(priority.map((item) => dishKey(item.dishName))), [priority]);
   const needle = dishKey(query);
 
@@ -139,6 +231,7 @@ export function FloorMenuPage() {
           autoComplete="off"
         />
       </label>
+      <FloorListen onSave={(text) => { cart.addNote(text); setHint(`Заметка: ${text}`); }} />
       {canNote ? (
         <button type="button" className="btn-ghost note-add" onClick={addNote}>
           Заметка
@@ -177,22 +270,17 @@ export function FloorMenuPage() {
 export function FloorOrderPage() {
   const { client } = useSession();
   const cart = useCart();
-  const shift = useShift();
   const queryClient = useQueryClient();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const tableOk = cart.table.trim().length > 0;
-  const availability = useMemo(() => {
-    const map = new Map((stop.data ?? []).map((entry) => [entry.dishId, entry]));
-    for (const entry of shift.dishes) map.set(entry.dishId, entry);
-    return map;
-  }, [stop.data, shift.dishes]);
+  const availability = useMemo(() => new Map((stop.data ?? []).map((entry) => [entry.dishId, entry])), [stop.data]);
   const dishes = cart.lines.filter((line) => line.kind === "dish");
   const blocked = dishes.some((line) => {
     const entry = availability.get(line.dishId);
-    return entry != null && (entry.isStopped || line.portions > entry.portionsPossible);
+    return entry != null && (entry.isStopped || (entry.hasLimit && line.portions > entry.portionsPossible));
   });
 
   async function submit() {
@@ -201,22 +289,18 @@ export function FloorOrderPage() {
     setError(null);
     setDone(null);
     try {
-      const apiLines = dishes.filter((line) => !line.dishId.startsWith("demo-"));
-      const demoLines = dishes.filter((line) => line.dishId.startsWith("demo-"));
-      if (apiLines.length > 0) {
+      if (dishes.length > 0) {
         await client.placeOrder({
           id: newId(),
-          items: apiLines.map((line) => ({ dishId: line.dishId, portions: line.portions })),
+          tableNumber: cart.table.trim(),
+          items: dishes.map((line) => ({ dishId: line.dishId, portions: line.portions })),
         });
-      }
-      if (demoLines.length > 0) {
-        shift.applyOrder(demoLines.map((line) => ({ dishId: line.dishId, portions: line.portions })), "зал");
       }
       const number = cart.table.trim();
       cart.clear();
       setDone(`Касса: стол ${number}, заказ на кухню.`);
       await queryClient.invalidateQueries({ queryKey: ["stop-list"] });
-      await queryClient.invalidateQueries({ queryKey: ["hot-offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["priority"] });
     } catch (caught) {
       if (caught instanceof ApiError && caught.order) {
         const lines = caught.order.shortages.map((item) => `${item.productName}: не хватает ${item.deficit}`).join(". ");
@@ -257,7 +341,7 @@ export function FloorOrderPage() {
           }
           const entry = availability.get(line.dishId);
           const stopped = entry?.isStopped === true;
-          const over = entry != null && line.portions > entry.portionsPossible;
+          const over = entry?.hasLimit === true && line.portions > entry.portionsPossible;
           return (
             <article key={line.dishId} className={stopped || over ? "floor-line floor-line-bad" : "floor-line"}>
               <div>
@@ -271,7 +355,7 @@ export function FloorOrderPage() {
                 <span>{line.portions}</span>
                 <button
                   type="button"
-                  disabled={entry != null && line.portions >= entry.portionsPossible}
+                  disabled={entry?.hasLimit === true && line.portions >= entry.portionsPossible}
                   onClick={() => cart.change(line.dishId, line.portions + 1)}
                 >
                   +

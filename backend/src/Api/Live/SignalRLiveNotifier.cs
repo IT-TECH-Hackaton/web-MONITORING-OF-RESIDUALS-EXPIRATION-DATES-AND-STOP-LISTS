@@ -4,6 +4,7 @@ using Monitoring.Core.Live;
 
 namespace Monitoring.Api.Live;
 
+/// <summary>Кладёт события в группу live. Имена событий совпадают с клиентом: stock.changed, stoplist.updated, shift.updated.</summary>
 public sealed class SignalRLiveNotifier(IHubContext<LiveHub> hub) : ILiveNotifier
 {
     public Task StockChanged(IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
@@ -15,8 +16,11 @@ public sealed class SignalRLiveNotifier(IHubContext<LiveHub> hub) : ILiveNotifie
     public Task BatchesExpired(IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken) =>
         hub.Clients.Group(LiveHub.GroupName).SendAsync("batch.expired", new { batchIds }, cancellationToken);
 
-    public Task StopListUpdated(IReadOnlyList<StopListEntry> entries, CancellationToken cancellationToken) =>
+    public Task StopListUpdated(IReadOnlyList<ShiftTile> entries, CancellationToken cancellationToken) =>
         hub.Clients.Group(LiveHub.GroupName).SendAsync("stoplist.updated", entries, cancellationToken);
+
+    public Task ShiftUpdated(CancellationToken cancellationToken) =>
+        hub.Clients.Group(LiveHub.GroupName).SendAsync("shift.updated", new { }, cancellationToken);
 
     public Task HotOffersUpdated(IReadOnlyList<HotOffer> offers, CancellationToken cancellationToken) =>
         hub.Clients.Group(LiveHub.GroupName).SendAsync("hotoffers.updated", offers, cancellationToken);

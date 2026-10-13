@@ -8,8 +8,6 @@ export default function MenuScreen() {
   const { client } = useSession();
   const cart = useCart();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
-  const offers = useQuery({ queryKey: ["hot-offers"], queryFn: () => client.hotOffers() });
-  const hot = new Set(offers.data?.map((offer) => offer.dishId));
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
@@ -18,10 +16,10 @@ export default function MenuScreen() {
         <View key={entry.dishId} style={entry.isStopped ? styles.cardStopped : styles.card}>
           <View style={styles.row}>
             <Text style={styles.name}>{entry.dishName}</Text>
-            {hot.has(entry.dishId) && !entry.isStopped ? <View style={styles.badge}><Text style={styles.badgeText}>предложить</Text></View> : null}
+            {entry.isPriority && !entry.isStopped ? <View style={styles.badge}><Text style={styles.badgeText}>предложить</Text></View> : null}
           </View>
           <Text style={styles.muted}>
-            {entry.isStopped ? entry.reason : `Хватит на ${entry.portionsPossible} порц.`}
+            {entry.isStopped ? entry.reason : entry.hasLimit ? `Хватит на ${entry.portionsPossible} порц.` : "Лимит заготовки не задан"}
           </Text>
           {!entry.isStopped ? (
             <Pressable style={styles.button} onPress={() => cart.add(entry.dishId, entry.dishName)}>

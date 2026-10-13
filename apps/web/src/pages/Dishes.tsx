@@ -59,6 +59,7 @@ export function DishesPage() {
             {dishes.data?.map((dish) => (
               <article key={dish.id}>
                 <strong>{dish.name}</strong>
+                <p className="reason">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(dish.salePrice)} за порцию</p>
                 <p className="reason">{dish.ingredients.map((line) => `${line.productName} ${line.quantity} ${line.unit === "G" ? "г" : line.unit === "Ml" ? "мл" : "шт"}`).join(", ")}</p>
                 <button className="btn-ghost" onClick={() => {
                   setEditing(dish.id);

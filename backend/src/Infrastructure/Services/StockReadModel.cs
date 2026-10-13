@@ -6,8 +6,10 @@ using Monitoring.Infrastructure.Persistence;
 
 namespace Monitoring.Infrastructure.Services;
 
+/// <summary>Чтение для экранов. Ничего не записывает: остатки, плитки смены, заказы, аналитика.</summary>
 public sealed class StockReadModel(AppDbContext db, IClock clock)
 {
+    /// <summary>Остаток по активным продуктам: сумма живых партий, ближайший срок, свежесть.</summary>
     public async Task<IReadOnlyList<StockItemView>> StockAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -27,10 +29,12 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
                 available,
                 nearest,
                 nearest is null ? null : FreshnessRules.HoursLeft(nearest.Value, now),
-                FreshnessRules.ForProduct(available, nearest, anyExpired, now));
+                FreshnessRules.ForProduct(available, nearest, anyExpired, now),
+                product.PurchasePrice);
         }).ToList();
     }
 
+    /// <summary>Партии одного продукта, от ближайшего срока. Вход: productId.</summary>
     public async Task<IReadOnlyList<BatchView>> BatchesAsync(Guid productId, CancellationToken cancellationToken)
     {
         var batches = await BatchQuery()
@@ -40,13 +44,75 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         return batches.Select(MapBatch).ToList();
     }
 
-    public async Task<IReadOnlyList<StopListEntry>> StopListAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Все блюда с рецептом. Стоп берётся из смены, кандидат — из калькулятора техкарты.
+    /// Без лимита шефа порций много и блюдо не серое, даже если склада мало.
+    /// </summary>
+    public async Task<IReadOnlyList<ShiftTile>> StopListAsync(CancellationToken cancellationToken)
     {
         var recipes = await RecipesAsync(cancellationToken);
         var stock = await AvailabilityAsync(cancellationToken);
-        return StopListCalculator.Calculate(recipes, stock);
+        var candidates = StopListCalculator.Calculate(recipes, stock)
+            .ToDictionary(entry => entry.DishId);
+        var shift = await db.ShiftDishes.AsNoTracking().ToDictionaryAsync(row => row.DishId, cancellationToken);
+        var tiles = new List<ShiftTile>();
+        foreach (var recipe in recipes.Where(recipe => recipe.Lines.Count > 0))
+        {
+            candidates.TryGetValue(recipe.DishId, out var candidate);
+            shift.TryGetValue(recipe.DishId, out var state);
+            var hasLimit = state?.PrepPortions is not null;
+            var prep = state?.PrepPortions;
+            var stopped = (state?.IsStopped ?? false) || prep == 0;
+            var portions = hasLimit ? prep!.Value : 999;
+            if (stopped)
+            {
+                portions = 0;
+            }
+
+            var low = !stopped && hasLimit && prep is > 0 and <= 5;
+            var candidateHit = candidate?.IsStopped == true;
+            string? reason = null;
+            if (stopped)
+            {
+                reason = string.IsNullOrWhiteSpace(state?.StopNote) ? ReasonLabel(state?.StopReason) : state!.StopNote;
+            }
+            else if (low)
+            {
+                reason = "Мало заготовки";
+            }
+
+            tiles.Add(new ShiftTile(
+                recipe.DishId,
+                recipe.DishName,
+                portions,
+                stopped,
+                candidateHit && !stopped,
+                low,
+                (state?.IsPriority ?? false) && !stopped,
+                reason,
+                candidateHit ? candidate!.Reason : null,
+                stopped ? state?.StopReason : null,
+                hasLimit));
+        }
+
+        return tiles.OrderBy(tile => tile.DishName).ToList();
     }
 
+    /// <summary>Только плитки, где шеф включил «предлагать» и блюдо не в стопе.</summary>
+    public async Task<IReadOnlyList<ShiftTile>> PriorityAsync(CancellationToken cancellationToken) =>
+        (await StopListAsync(cancellationToken)).Where(tile => tile.IsPriority).ToList();
+
+    private static string? ReasonLabel(string? reason) => reason switch
+    {
+        nameof(StopReason.OutOfProduct) => "Закончился продукт",
+        nameof(StopReason.Waste) => "Брак",
+        nameof(StopReason.Quality) => "Качество",
+        nameof(StopReason.WontMakeIt) => "Не успеем",
+        nameof(StopReason.Equipment) => "Техника",
+        _ => reason,
+    };
+
+    /// <summary>Подсказка алгоритма для шефа. Зал этот список не показывает.</summary>
     public async Task<IReadOnlyList<HotOffer>> HotOffersAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -68,6 +134,10 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         return HotOfferRanker.Rank(recipes, hotBatches, available, now);
     }
 
+    /// <summary>
+    /// Сводка менеджера. Число стопов — подтверждённые шефом.
+    /// Рядом партии на сутки, автосписание срока за сегодня, заказы и короткий прогноз.
+    /// </summary>
     public async Task<DashboardView> DashboardAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -88,8 +158,12 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             .Where(movement => movement.Type == MovementType.ExpiryWriteOff && movement.CreatedAt >= dayStart)
             .ToListAsync(cancellationToken);
         var expiryTotals = writeOffs
-            .GroupBy(movement => movement.Batch.Product)
-            .Select(group => new ExpiryTotalView(group.Key.Name, group.Key.Unit, group.Sum(movement => movement.Quantity)))
+            .GroupBy(movement => movement.Batch.ProductId)
+            .Select(group =>
+            {
+                var product = group.First().Batch.Product;
+                return new ExpiryTotalView(product.Id, product.Name, product.Unit, group.Sum(movement => movement.Quantity));
+            })
             .OrderByDescending(row => row.Quantity)
             .ToList();
         var acceptedToday = await db.Orders.CountAsync(
@@ -105,6 +179,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             await WeeklyForecastAsync(cancellationToken));
     }
 
+    /// <summary>Прогноз на следующую неделю по темпу заказов с понедельника.</summary>
     public async Task<WeeklyForecastReport> WeeklyForecastAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
@@ -215,7 +290,8 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         return Math.Round(median, 0);
     }
 
-    public async Task<IReadOnlyList<WriteOffView>> WriteOffsAsync(DateTime from, DateTime to, CancellationToken cancellationToken)
+    /// <summary>Списания за интервал [from, to). reason фильтрует статью, пусто — все.</summary>
+    public async Task<IReadOnlyList<WriteOffView>> WriteOffsAsync(DateTime from, DateTime to, string? reason, CancellationToken cancellationToken)
     {
         var rows = await db.StockMovements.AsNoTracking()
             .Include(movement => movement.Batch)
@@ -224,14 +300,19 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
                 && movement.CreatedAt < to
                 && (movement.Type == MovementType.ExpiryWriteOff || movement.Type == MovementType.OrderWriteOff || movement.Type == MovementType.KitchenWriteOff))
             .ToListAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            rows = rows.Where(movement => string.Equals(movement.Reason, reason, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
 
         return rows
-            .GroupBy(movement => new { movement.Batch.Product.Id, movement.Batch.Product.Name, movement.Batch.Product.Unit, movement.Type })
-            .Select(group => new WriteOffView(group.Key.Id, group.Key.Name, group.Key.Unit, group.Key.Type, group.Sum(movement => movement.Quantity)))
+            .GroupBy(movement => new { movement.Batch.Product.Id, movement.Batch.Product.Name, movement.Batch.Product.Unit, movement.Type, movement.Reason })
+            .Select(group => new WriteOffView(group.Key.Id, group.Key.Name, group.Key.Unit, group.Key.Type, group.Sum(movement => movement.Quantity), group.Key.Reason))
             .OrderByDescending(row => row.Quantity)
             .ToList();
     }
 
+    /// <summary>По отказам заказов: сколько раз не хватило продукта и сколько не хватает сейчас.</summary>
     public async Task<IReadOnlyList<DeficitView>> DeficitsAsync(CancellationToken cancellationToken)
     {
         var shortages = await db.OrderShortages.AsNoTracking()
@@ -273,6 +354,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             .ToList();
     }
 
+    /// <summary>Заказы с строками, дефицитом и номером стола, новые сверху.</summary>
     public async Task<IReadOnlyList<OrderView>> OrdersAsync(CancellationToken cancellationToken)
     {
         var orders = await OrderQuery()
@@ -282,6 +364,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         return orders.Select(MapOrder).ToList();
     }
 
+    /// <summary>Один заказ по id или null, если такого нет.</summary>
     public async Task<OrderView?> OrderAsync(Guid id, CancellationToken cancellationToken)
     {
         var order = await OrderQuery().FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
@@ -313,7 +396,8 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             shortage.Product.Name,
             shortage.Required,
             shortage.Available,
-            shortage.Required - shortage.Available)).ToList());
+            shortage.Required - shortage.Available)).ToList(),
+        order.TableNumber);
 
     private async Task<IReadOnlyDictionary<Guid, ProductAvailability>> AvailabilityAsync(CancellationToken cancellationToken)
     {
@@ -333,7 +417,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
     }
 
     private async Task<IReadOnlyList<ForecastView>> ForecastsAsync(
-        IReadOnlyList<StopListEntry> stop,
+        IReadOnlyList<ShiftTile> stop,
         CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;

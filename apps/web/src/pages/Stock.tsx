@@ -24,12 +24,13 @@ export function StockPage() {
         {stock.data && stock.data.length > 0 && visible.length === 0 ? <Empty>Ничего не найдено.</Empty> : null}
         {visible.length > 0 ? (
           <table>
-            <thead><tr><th>Продукт</th><th>Доступно</th><th>Ближайший срок</th><th>Осталось</th><th></th></tr></thead>
+            <thead><tr><th>Продукт</th><th>Доступно</th><th>Цена закупки</th><th>Ближайший срок</th><th>Осталось</th><th></th></tr></thead>
             <tbody>
               {visible.map((item) => (
                 <tr key={item.productId} className="clickable">
                   <td><Link to={`/stock/${item.productId}`}>{item.name}</Link></td>
                   <td><Qty value={item.available} unit={item.unit} /></td>
+                  <td>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 2 }).format(item.purchasePrice)}</td>
                   <td>{item.nearestExpiry ? formatWhen(item.nearestExpiry) : "—"}</td>
                   <td><Hours value={item.hoursLeft} /></td>
                   <td><FreshnessPill freshness={item.freshness} /></td>

@@ -7,14 +7,14 @@ export function DashboardPage() {
   const { client } = useSession();
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: () => client.dashboard() });
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
-  const offers = useQuery({ queryKey: ["hot-offers"], queryFn: () => client.hotOffers() });
+  const priorityQuery = useQuery({ queryKey: ["priority"], queryFn: () => client.priority() });
 
   if (dashboard.isLoading) return <p>Считаем склад…</p>;
   if (dashboard.error) return <ErrorText error={dashboard.error} />;
   const data = dashboard.data!;
   const stopped = stop.data?.filter((entry) => entry.isStopped) ?? [];
   const low = stop.data?.filter(isLow) ?? [];
-  const priority = offers.data?.slice(0, 4) ?? [];
+  const priority = priorityQuery.data ?? [];
 
   return (
     <>
@@ -49,16 +49,11 @@ export function DashboardPage() {
         )}
       </Panel>
       <Panel title="Приоритет продажи">
-        <p className="reason">Пока считает система по короткому сроку партий. Шеф подтвердит список на «Смене».</p>
-        {offers.isLoading ? <p>Загрузка…</p> : null}
-        {priority.length === 0 ? <Empty>Нет блюд, которыми стоит спасать срок.</Empty> : (
-          <div className="stack">
-            {priority.map((offer, index) => (
-              <article key={offer.dishId}>
-                <strong>{index + 1}. {offer.dishName}</strong>
-                <p className="reason">{offer.reason}</p>
-              </article>
-            ))}
+        <p className="reason">Только то, что шеф подтвердил на смене. Подсказка системы зал не видит.</p>
+        {priorityQuery.isLoading ? <p>Загрузка…</p> : null}
+        {priority.length === 0 ? <Empty>Шеф ещё не отметил, что предлагать.</Empty> : (
+          <div className="tiles">
+            {priority.map((entry) => <DishTile key={entry.dishId} entry={entry} priority />)}
           </div>
         )}
       </Panel>
@@ -87,7 +82,7 @@ export function DashboardPage() {
           ) : (
             <div className="stack">
               {data.expiryWriteOffToday.map((row) => (
-                <article key={row.productName}>
+                <article key={row.productId}>
                   <strong>{row.productName}</strong>
                   <p className="reason"><Qty value={row.quantity} unit={row.unit} /></p>
                 </article>

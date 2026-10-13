@@ -16,24 +16,16 @@ public sealed record KitchenBatchCard(
     DateTime? OpenedAt,
     string? Note);
 
-public sealed record KitchenBoard(
-    IReadOnlyList<OrderView> Orders,
-    IReadOnlyList<KitchenBatchCard> Batches);
+/// <summary>Доска «использовать первым»: только партии. Очереди заказов в ответе нет.</summary>
+public sealed record KitchenBoard(IReadOnlyList<KitchenBatchCard> Batches);
 
+/// <summary>Короткий срок, вскрытие партии и старые отметки тикета.</summary>
 public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier notifier, StockBroadcaster broadcaster)
 {
+    /// <summary>Активные партии, которые истекают за 72 часа или уже вскрыты. До 40 штук.</summary>
     public async Task<KitchenBoard> BoardAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        var orders = await db.Orders.AsNoTracking()
-            .Include(order => order.CreatedByUser)
-            .Include(order => order.Items).ThenInclude(item => item.Dish)
-            .Include(order => order.Shortages).ThenInclude(shortage => shortage.Product)
-            .Where(order => order.Status == OrderStatus.Accepted)
-            .OrderBy(order => order.CreatedAt)
-            .Take(40)
-            .ToListAsync(cancellationToken);
-
         var soon = now.AddHours(72);
         var batches = await db.Batches.AsNoTracking()
             .Include(batch => batch.Product)
@@ -44,7 +36,6 @@ public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier 
             .ToListAsync(cancellationToken);
 
         return new KitchenBoard(
-            orders.Select(StockReadModel.MapOrder).ToList(),
             batches.Select(batch => new KitchenBatchCard(
                 batch.Id,
                 batch.Product.Name,
@@ -56,6 +47,7 @@ public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier 
                 batch.KitchenNote)).ToList());
     }
 
+    /// <summary>Ставит позиции заказа Queued, Cooking или Ready и заметку. Новый экран смены не вызывает.</summary>
     public async Task<ServiceResult<OrderView>> MarkDishAsync(
         Guid orderId,
         Guid itemId,
@@ -88,6 +80,7 @@ public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier 
         return ServiceResult<OrderView>.Ok(StockReadModel.MapOrder(order));
     }
 
+    /// <summary>Вскрывает партию и пишет заметку. Количество списания больше нуля уменьшает остаток партии.</summary>
     public async Task<ServiceResult<KitchenBatchCard>> MarkBatchAsync(
         Guid batchId,
         bool opened,

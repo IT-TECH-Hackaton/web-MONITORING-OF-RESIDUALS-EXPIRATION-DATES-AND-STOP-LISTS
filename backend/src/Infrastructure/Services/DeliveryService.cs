@@ -5,8 +5,10 @@ using Monitoring.Infrastructure.Persistence;
 
 namespace Monitoring.Infrastructure.Services;
 
+/// <summary>Приёмка поставки в партии. Повтор того же id возвращает уже созданную, склад второй раз не растёт.</summary>
 public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcaster broadcaster)
 {
+    /// <summary>Вход: номер, строки с количеством и сроком. Выход: поставка и флаг, создана она сейчас или уже была.</summary>
     public async Task<ServiceResult<DeliveryReceipt>> ReceiveAsync(ReceiveDeliveryCommand command, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(command.Number))
@@ -77,6 +79,7 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
                 ReceivedAt = receivedAt,
                 ExpiresAt = expiresAt,
                 Status = BatchStatus.Active,
+                UnitCost = product.PurchasePrice,
                 CertificateNumber = item.Certificate?.Number.Trim(),
                 CertificateIssuer = item.Certificate?.Issuer.Trim(),
                 CertificateIssuedAt = item.Certificate is null ? null : SpecifyUtc(item.Certificate.IssuedAt),
@@ -99,6 +102,7 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
             Number = command.Number.Trim(),
             Supplier = string.IsNullOrWhiteSpace(command.Supplier) ? null : command.Supplier.Trim(),
             CreatedAt = receivedAt,
+            ReceivedBy = command.ReceivedBy,
             Batches = batches,
         });
 

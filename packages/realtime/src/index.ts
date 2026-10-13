@@ -1,4 +1,4 @@
-import { HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from "@microsoft/signalr";
 
 export const LiveEvents = {
   stockChanged: "stock.changed",
@@ -8,11 +8,26 @@ export const LiveEvents = {
   hotOffersUpdated: "hotoffers.updated",
   orderDecided: "order.decided",
   kitchenUpdated: "kitchen.updated",
+  shiftUpdated: "shift.updated",
 } as const;
 
 export type StockChangedPayload = { productIds: string[] };
 export type BatchPayload = { batchIds: string[] };
 export type OrderDecidedPayload = { orderId: string; status: string };
+
+/** Не вызывает stop(), пока negotiate не закончился: иначе клиент пишет «stopped during negotiation». */
+export function bindLive(connection: HubConnection): () => void {
+  let alive = true;
+  void connection.start().then(() => {
+    if (!alive) void connection.stop();
+  }).catch(() => undefined);
+  return () => {
+    alive = false;
+    if (connection.state === HubConnectionState.Connected) {
+      void connection.stop();
+    }
+  };
+}
 
 export function connectLive(baseUrl: string, accessToken: () => string): HubConnection {
   const root = baseUrl.replace(/\/$/, "");

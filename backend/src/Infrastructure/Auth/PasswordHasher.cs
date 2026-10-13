@@ -3,6 +3,7 @@ using System.Text;
 
 namespace Monitoring.Infrastructure.Auth;
 
+/// <summary>Хеш пароля PBKDF2. Наружу уходит строка, по которой можно проверить пароль и нельзя его прочитать.</summary>
 public static class PasswordHasher
 {
     private const int Iterations = 100_000;

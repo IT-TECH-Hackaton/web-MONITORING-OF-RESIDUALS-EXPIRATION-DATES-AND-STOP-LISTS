@@ -3,15 +3,18 @@ using Monitoring.Infrastructure.Persistence;
 
 namespace Monitoring.Infrastructure.Services;
 
+/// <summary>Справочник продуктов и техкарт. Склад и смену не меняет.</summary>
 public sealed class CatalogService(AppDbContext db)
 {
+    /// <summary>Активные продукты: id, имя, единица.</summary>
     public async Task<IReadOnlyList<ProductView>> ProductsAsync(CancellationToken cancellationToken) =>
         await db.Products.AsNoTracking()
             .Where(product => product.IsActive)
             .OrderBy(product => product.Name)
-            .Select(product => new ProductView(product.Id, product.Name, product.Unit, product.IsActive))
+            .Select(product => new ProductView(product.Id, product.Name, product.Unit, product.IsActive, product.PurchasePrice))
             .ToListAsync(cancellationToken);
 
+    /// <summary>Вход: имя и единица. Пустое имя — ошибка. Выход: созданный продукт.</summary>
     public async Task<ServiceResult<ProductView>> CreateProductAsync(CreateProductCommand command, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(command.Name))
@@ -28,9 +31,10 @@ public sealed class CatalogService(AppDbContext db)
         };
         db.Products.Add(product);
         await db.SaveChangesAsync(cancellationToken);
-        return ServiceResult<ProductView>.Ok(new ProductView(product.Id, product.Name, product.Unit, product.IsActive));
+        return ServiceResult<ProductView>.Ok(new ProductView(product.Id, product.Name, product.Unit, product.IsActive, product.PurchasePrice));
     }
 
+    /// <summary>Блюда со строками техкарты.</summary>
     public async Task<IReadOnlyList<DishView>> DishesAsync(CancellationToken cancellationToken)
     {
         var dishes = await db.Dishes.AsNoTracking()
@@ -42,6 +46,7 @@ public sealed class CatalogService(AppDbContext db)
         return dishes.Select(Map).ToList();
     }
 
+    /// <summary>Вход: имя и ингредиенты. Выход: блюдо. Продукт в строке должен существовать.</summary>
     public async Task<ServiceResult<DishView>> CreateDishAsync(UpsertDishCommand command, CancellationToken cancellationToken)
     {
         var error = await ValidateDishAsync(command, cancellationToken);
@@ -66,6 +71,7 @@ public sealed class CatalogService(AppDbContext db)
         return ServiceResult<DishView>.Ok((await DishesAsync(cancellationToken)).Single(item => item.Id == dish.Id));
     }
 
+    /// <summary>Заменяет имя и техкарту блюда. Старые строки рецепта стирает и пишет новые.</summary>
     public async Task<ServiceResult<DishView>> UpdateDishAsync(Guid id, UpsertDishCommand command, CancellationToken cancellationToken)
     {
         var dish = await db.Dishes.Include(item => item.Ingredients).FirstOrDefaultAsync(item => item.Id == id && item.IsActive, cancellationToken);
@@ -144,5 +150,6 @@ public sealed class CatalogService(AppDbContext db)
         dish.Ingredients
             .OrderBy(line => line.Product.Name)
             .Select(line => new DishIngredientView(line.ProductId, line.Product.Name, line.Product.Unit, line.Quantity))
-            .ToList());
+            .ToList(),
+        dish.SalePrice);
 }

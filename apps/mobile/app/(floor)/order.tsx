@@ -1,7 +1,7 @@
 import { ApiError, newId } from "@repo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useCart } from "../../src/cart";
 import { useSession } from "../../src/session";
 import { styles } from "../../src/theme";
@@ -14,20 +14,22 @@ export default function OrderScreen() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [table, setTable] = useState("");
   const availability = new Map(stop.data?.map((entry) => [entry.dishId, entry]));
   const blocked = cart.lines.some((line) => {
     const entry = availability.get(line.dishId);
-    return entry != null && (entry.isStopped || line.portions > entry.portionsPossible);
+    return entry != null && (entry.isStopped || (entry.hasLimit && line.portions > entry.portionsPossible));
   });
 
   async function submit() {
-    if (blocked) return;
+    if (blocked || table.trim().length === 0) return;
     setPending(true);
     setError(null);
     setDone(null);
     try {
       await client.placeOrder({
         id: newId(),
+        tableNumber: table.trim(),
         items: cart.lines.map((line) => ({ dishId: line.dishId, portions: line.portions })),
       });
       cart.clear();
@@ -53,7 +55,7 @@ export default function OrderScreen() {
       {cart.lines.map((line) => {
         const entry = availability.get(line.dishId);
         const stopped = entry?.isStopped === true;
-        const over = entry != null && line.portions > entry.portionsPossible;
+        const over = entry?.hasLimit === true && line.portions > entry.portionsPossible;
         return (
           <View key={line.dishId} style={stopped || over ? styles.cardStopped : styles.card}>
             <Text style={styles.name}>{line.dishName}</Text>
@@ -64,7 +66,7 @@ export default function OrderScreen() {
               <Text style={styles.name}>{line.portions}</Text>
               <Pressable
                 style={styles.ghost}
-                disabled={entry != null && line.portions >= entry.portionsPossible}
+                disabled={entry?.hasLimit === true && line.portions >= entry.portionsPossible}
                 onPress={() => cart.change(line.dishId, line.portions + 1)}
               >
                 <Text style={styles.ghostText}>+</Text>
@@ -73,11 +75,13 @@ export default function OrderScreen() {
           </View>
         );
       })}
-      {blocked ? <Text style={styles.error}>В корзине есть блюдо из стоп-листа или порций больше, чем можно приготовить.</Text> : null}
+      <Text style={styles.muted}>Номер стола</Text>
+      <TextInput value={table} onChangeText={setTable} keyboardType="number-pad" style={styles.input} />
+      {blocked ? <Text style={styles.error}>В корзине есть блюдо из стоп-листа или порций больше, чем на заготовке.</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {done ? <Text style={styles.muted}>{done}</Text> : null}
       {cart.lines.length > 0 ? (
-        <Pressable style={styles.button} onPress={() => void submit()} disabled={pending || blocked}>
+        <Pressable style={styles.button} onPress={() => void submit()} disabled={pending || blocked || table.trim().length === 0}>
           <Text style={styles.buttonText}>{pending ? "Отправляем…" : "Отправить заказ"}</Text>
         </Pressable>
       ) : null}
