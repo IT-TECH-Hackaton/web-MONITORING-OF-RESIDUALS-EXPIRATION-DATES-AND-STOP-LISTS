@@ -50,6 +50,7 @@ export function DeliveriesPage() {
           <h1>Поставки</h1>
           <p>Каждая позиция становится партией со своим сроком годности.</p>
         </div>
+        <Link to="/intake">Приёмка QR</Link>
       </div>
       <div className="split">
         <Panel title="Журнал">

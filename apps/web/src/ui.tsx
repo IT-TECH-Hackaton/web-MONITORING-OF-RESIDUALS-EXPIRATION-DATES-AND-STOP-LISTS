@@ -1,5 +1,51 @@
-import { formatHours, formatQty, freshnessLabel, type Freshness, type Unit } from "@repo/contracts";
+import { formatHours, formatQty, freshnessLabel, type Freshness, type StopEntry, type Unit } from "@repo/contracts";
 import type { ReactNode } from "react";
+
+export const LOW_PORTIONS = 5;
+
+export function isLow(entry: StopEntry) {
+  return !entry.isStopped && entry.portionsPossible > 0 && entry.portionsPossible <= LOW_PORTIONS;
+}
+
+export function StatusPill({ entry }: { entry: StopEntry }) {
+  if (entry.isStopped) return <span className="pill pill-stop">стоп</span>;
+  if (isLow(entry)) return <span className="pill pill-low">мало</span>;
+  return <span className="pill pill-ok">ок</span>;
+}
+
+export function DishTile({
+  entry,
+  priority,
+  showReason,
+  onClick,
+}: {
+  entry: StopEntry;
+  priority?: boolean;
+  showReason?: boolean;
+  onClick?: () => void;
+}) {
+  const classes = [
+    "tile",
+    entry.isStopped ? "tile-stop" : isLow(entry) ? "tile-low" : "tile-ok",
+    priority ? "tile-priority" : "",
+    onClick ? "tile-tap" : "",
+  ].filter(Boolean).join(" ");
+  const inner = (
+    <>
+      <span className="qty">{entry.isStopped ? "0" : entry.portionsPossible}</span>
+      <strong>{entry.dishName}</strong>
+      {showReason && entry.reason ? <p className="reason">{entry.reason}</p> : null}
+      <div className="btn-row">
+        <StatusPill entry={entry} />
+        {priority ? <span className="pill pill-priority">приоритет</span> : null}
+      </div>
+    </>
+  );
+  if (onClick) {
+    return <button type="button" className={classes} onClick={onClick}>{inner}</button>;
+  }
+  return <article className={classes}>{inner}</article>;
+}
 
 export function formatWhen(iso: string) {
   return new Intl.DateTimeFormat("ru-RU", {

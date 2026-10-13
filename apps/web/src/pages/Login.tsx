@@ -10,6 +10,8 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  if (session?.role === "Waiter") return <Navigate to="/floor" replace />;
+  if (session?.role === "Kitchen") return <Navigate to="/kitchen" replace />;
   if (session) return <Navigate to="/" replace />;
 
   async function submit(event: FormEvent) {
@@ -28,8 +30,8 @@ export function LoginPage() {
   return (
     <main className="login-wrap">
       <form className="login-card form" onSubmit={submit}>
-        <h1>Смена</h1>
-        <p>Консоль склада: поставки, партии и блюда, которые пора предлагать.</p>
+        <h1>Вход</h1>
+        <p>Склад, стоп-лист и сроки годности.</p>
         <label>
           Логин
           <input value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" />
@@ -38,7 +40,7 @@ export function LoginPage() {
           Пароль
           <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
         </label>
-        {error ? <p className="error-text">{error}</p> : <p className="hint">Демо: manager / manager123, кухня kitchen / kitchen123</p>}
+        {error ? <p className="error-text">{error}</p> : <p className="hint">manager / manager123 · kitchen / kitchen123 · waiter / waiter123</p>}
         <button className="btn" disabled={pending}>{pending ? "Входим…" : "Войти"}</button>
       </form>
     </main>

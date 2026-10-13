@@ -54,7 +54,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!session?.accessToken || (session.role !== "Manager" && session.role !== "Kitchen")) return;
+    if (!session?.accessToken) return;
     const connection = connectLive(apiBaseUrl, () => memory.session?.accessToken ?? "");
     const refresh = () => {
       for (const key of ["dashboard", "stock", "batches", "stop-list", "hot-offers", "orders", "deliveries", "write-offs", "deficits", "weekly-forecast", "kitchen"]) {
