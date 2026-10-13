@@ -16,11 +16,13 @@ export function StatusPill({ entry }: { entry: StopEntry }) {
 export function DishTile({
   entry,
   priority,
+  candidate,
   showReason,
   onClick,
 }: {
   entry: StopEntry;
   priority?: boolean;
+  candidate?: boolean;
   showReason?: boolean;
   onClick?: () => void;
 }) {
@@ -28,6 +30,7 @@ export function DishTile({
     "tile",
     entry.isStopped ? "tile-stop" : isLow(entry) ? "tile-low" : "tile-ok",
     priority ? "tile-priority" : "",
+    candidate && !entry.isStopped ? "tile-candidate" : "",
     onClick ? "tile-tap" : "",
   ].filter(Boolean).join(" ");
   const inner = (
@@ -37,6 +40,7 @@ export function DishTile({
       {showReason && entry.reason ? <p className="reason">{entry.reason}</p> : null}
       <div className="btn-row">
         <StatusPill entry={entry} />
+        {candidate && !entry.isStopped ? <span className="pill pill-low">кандидат</span> : null}
         {priority ? <span className="pill pill-priority">приоритет</span> : null}
       </div>
     </>

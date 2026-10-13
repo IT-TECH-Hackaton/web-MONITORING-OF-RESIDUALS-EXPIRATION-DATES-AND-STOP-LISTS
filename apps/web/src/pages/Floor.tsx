@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useCart } from "../cart";
-import { demoPriority, demoStopped } from "../floorDemo";
 import { useSession } from "../session";
+import { useShift } from "../shiftStore";
 import { ThemeToggle } from "../theme";
 import { Empty, isLow } from "../ui";
 
@@ -18,15 +18,13 @@ function matches(name: string, query: string) {
   return dishKey(name).includes(needle);
 }
 
-function mergeMenu(api: StopEntry[] | undefined): StopEntry[] {
+function mergeMenu(api: StopEntry[] | undefined, shift: StopEntry[]): StopEntry[] {
   const map = new Map<string, StopEntry>();
-  for (const entry of [...(api ?? []), ...demoStopped, ...demoPriority]) {
+  for (const entry of [...(api ?? []), ...shift]) {
     map.set(dishKey(entry.dishName), entry);
   }
   return [...map.values()];
 }
-
-const PRIORITY_KEYS = new Set(demoPriority.map((item) => dishKey(item.dishName)));
 
 export function FloorShell() {
   const { session, client } = useSession();
@@ -60,25 +58,27 @@ export function FloorShell() {
 export function FloorMenuPage() {
   const { client } = useSession();
   const cart = useCart();
+  const shift = useShift();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const [query, setQuery] = useState("");
   const [hint, setHint] = useState<string | null>(null);
-  const dishes = useMemo(() => mergeMenu(stop.data), [stop.data]);
-  const stopped = demoStopped;
-  const priority = demoPriority;
+  const dishes = useMemo(() => mergeMenu(stop.data, shift.dishes), [stop.data, shift.dishes]);
+  const stopped = shift.dishes.filter((entry) => entry.isStopped);
+  const priority = shift.dishes.filter((entry) => entry.isPriority && !entry.isStopped);
+  const hotKeys = useMemo(() => new Set(priority.map((item) => dishKey(item.dishName))), [priority]);
   const needle = dishKey(query);
 
   const results = useMemo(() => {
     const found = dishes.filter((entry) => !entry.isStopped && matches(entry.dishName, query));
     return found.sort((a, b) => {
-      const aHot = PRIORITY_KEYS.has(dishKey(a.dishName)) ? 0 : 1;
-      const bHot = PRIORITY_KEYS.has(dishKey(b.dishName)) ? 0 : 1;
+      const aHot = hotKeys.has(dishKey(a.dishName)) ? 0 : 1;
+      const bHot = hotKeys.has(dishKey(b.dishName)) ? 0 : 1;
       if (aHot !== bHot) return aHot - bHot;
       const aPref = dishKey(a.dishName).startsWith(needle) ? 0 : 1;
       const bPref = dishKey(b.dishName).startsWith(needle) ? 0 : 1;
       return aPref - bPref || a.dishName.localeCompare(b.dishName, "ru");
     });
-  }, [dishes, query, needle]);
+  }, [dishes, query, needle, hotKeys]);
   const canNote = Boolean(needle) && results.length === 0;
 
   function add(entry: StopEntry) {
@@ -151,7 +151,7 @@ export function FloorMenuPage() {
         ) : (
           <ul className="suggest">
             {results.map((entry) => {
-              const featured = PRIORITY_KEYS.has(dishKey(entry.dishName));
+              const featured = hotKeys.has(dishKey(entry.dishName));
               return (
                 <li key={entry.dishId}>
                   <button
@@ -177,13 +177,18 @@ export function FloorMenuPage() {
 export function FloorOrderPage() {
   const { client } = useSession();
   const cart = useCart();
+  const shift = useShift();
   const queryClient = useQueryClient();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const tableOk = cart.table.trim().length > 0;
-  const availability = new Map(stop.data?.map((entry) => [entry.dishId, entry]));
+  const availability = useMemo(() => {
+    const map = new Map((stop.data ?? []).map((entry) => [entry.dishId, entry]));
+    for (const entry of shift.dishes) map.set(entry.dishId, entry);
+    return map;
+  }, [stop.data, shift.dishes]);
   const dishes = cart.lines.filter((line) => line.kind === "dish");
   const blocked = dishes.some((line) => {
     const entry = availability.get(line.dishId);
@@ -196,11 +201,16 @@ export function FloorOrderPage() {
     setError(null);
     setDone(null);
     try {
-      if (dishes.length > 0) {
+      const apiLines = dishes.filter((line) => !line.dishId.startsWith("demo-"));
+      const demoLines = dishes.filter((line) => line.dishId.startsWith("demo-"));
+      if (apiLines.length > 0) {
         await client.placeOrder({
           id: newId(),
-          items: dishes.map((line) => ({ dishId: line.dishId, portions: line.portions })),
+          items: apiLines.map((line) => ({ dishId: line.dishId, portions: line.portions })),
         });
+      }
+      if (demoLines.length > 0) {
+        shift.applyOrder(demoLines.map((line) => ({ dishId: line.dishId, portions: line.portions })), "зал");
       }
       const number = cart.table.trim();
       cart.clear();
