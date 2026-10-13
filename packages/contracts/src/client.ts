@@ -1,4 +1,4 @@
-import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type QrIntakeResult, type Session, type ShiftHistoryEntry, type StockItem, type StopEntry, type Unit, type MoneyReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
+import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type QrIntakeResult, type Session, type ShiftHistoryEntry, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
 
 export type TokenStore = {
   getAccess: () => string | null;
@@ -129,6 +129,7 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
       request(`/api/shift/dishes/${dishId}/priority`, { method: "POST", body: JSON.stringify({ on }) }).then((response) => json<StopEntry>(response)),
     deficits: () => request("/api/analytics/deficits").then((response) => json<Deficit[]>(response)),
     weeklyForecast: () => request("/api/analytics/weekly-forecast").then((response) => json<WeeklyForecastReport>(response)),
+    spend: (days: number) => request(`/api/analytics/spend?days=${days}`).then((response) => json<SpendReport>(response)),
     reports: () => request("/api/reports").then((response) => json<MoneyReport>(response)),
     kitchen: () => request("/api/kitchen").then((response) => json<KitchenBoard>(response)),
     markDish: (orderId: string, itemId: string, status: KitchenStatus, note: string) =>

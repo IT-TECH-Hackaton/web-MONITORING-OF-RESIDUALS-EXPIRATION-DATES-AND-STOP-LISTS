@@ -5,21 +5,22 @@ import { forecastBasis, PurchaseButton } from "./PurchaseQr";
 export function WeeklyForecastPanel({
   report,
   shortagesOnly,
+  plain,
 }: {
   report: WeeklyForecastReport;
   shortagesOnly?: boolean;
+  plain?: boolean;
 }) {
   const items = shortagesOnly ? report.items.filter((item) => item.shortfall > 0) : report.items;
   const hasConsumption = report.items.some((item) => item.consumedThisWeek > 0);
-
-  return (
-    <Panel title={shortagesOnly ? "На следующей неделе не хватит" : "Прогноз на неделю"}>
-      <p className="reason">
+  const body = (
+    <>
+      {plain ? null : <p className="reason">
         Расход с понедельника ({report.elapsedDays} дн. этой недели) переносится на следующие 7 дней.
         Партия, которая истечёт раньше, чем её успеют списать, в покрытие не входит.
         {" "}{forecastBasis(report.ordersThisWeek)}
-      </p>
-      {items.some((item) => item.shortfall > 0) ? (
+      </p>}
+      {!plain && items.some((item) => item.shortfall > 0) ? (
         <PurchaseButton label="В заявку всё, чего не хватит" />
       ) : null}
       {items.length === 0 ? (
@@ -58,6 +59,12 @@ export function WeeklyForecastPanel({
           </tbody>
         </table>
       )}
+    </>
+  );
+  if (plain) return body;
+  return (
+    <Panel title={shortagesOnly ? "На следующей неделе не хватит" : "Прогноз на неделю"}>
+      {body}
     </Panel>
   );
 }

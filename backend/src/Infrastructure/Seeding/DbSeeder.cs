@@ -103,6 +103,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         await EnsureUserAsync("waiter2", "waiter2123", UserRole.Waiter, "Пётр", cancellationToken);
         await EnsureUserAsync("kitchen2", "kitchen2123", UserRole.Kitchen, "Олег", cancellationToken);
         await EnsureUserAsync("buyer", "buyer123", UserRole.Manager, "Елена", cancellationToken);
+        await EnsureUserAsync("store", "store123", UserRole.Kitchen, "Сергей", cancellationToken);
         await NameAsync("manager", "Анна", cancellationToken);
         await NameAsync("kitchen", "Игорь", cancellationToken);
         await NameAsync("waiter", "Мария", cancellationToken);
@@ -150,6 +151,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
 
         var buyer = await db.Users.FirstAsync(user => user.Login == "buyer", cancellationToken);
         var chef = await db.Users.FirstAsync(user => user.Login == "kitchen", cancellationToken);
+        var store = await db.Users.FirstAsync(user => user.Login == "store", cancellationToken);
         var manager = await db.Users.FirstAsync(user => user.Login == "manager", cancellationToken);
         await db.Deliveries.Where(delivery => delivery.ReceivedBy == null)
             .ExecuteUpdateAsync(setters => setters.SetProperty(delivery => delivery.ReceivedBy, manager.Id), cancellationToken);
@@ -174,6 +176,49 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
                 Line(MoneyCatalog.Lemon, 700, now.AddDays(6)),
                 Line(MoneyCatalog.Garlic, 300, now.AddDays(20)),
                 Line(MoneyCatalog.Potato, 4000, now.AddDays(15))));
+        }
+
+        if (!await db.Deliveries.AnyAsync(delivery => delivery.Id == MoneyCatalog.StoreDeliveryId, cancellationToken))
+        {
+            db.Deliveries.Add(PricedDelivery(MoneyCatalog.StoreDeliveryId, "П-1120", now.AddHours(-8), store.Id,
+                Line(MoneyCatalog.Flour, 20000, now.AddDays(60)),
+                Line(MoneyCatalog.Oil, 5000, now.AddDays(90)),
+                Line(MoneyCatalog.Sugar, 10000, now.AddDays(180)),
+                Line(MoneyCatalog.Cucumber, 4000, now.AddDays(5)),
+                Line(MoneyCatalog.Butter, 2000, now.AddDays(20))));
+        }
+
+        var actors = new[] { manager.Id, buyer.Id, store.Id, chef.Id };
+        (Guid Product, decimal Qty)[] samples =
+        [
+            (SalmonId, 800),
+            (CoffeeId, 420),
+            (MozzarellaId, 1400),
+            (MoneyCatalog.Beef, 1800),
+            (MoneyCatalog.Chicken, 2600),
+            (MoneyCatalog.Shrimp, 700),
+            (MoneyCatalog.Butter, 900),
+            (MoneyCatalog.Flour, 9000),
+            (MilkId, 7000),
+            (MoneyCatalog.Egg, 36),
+        ];
+        for (var ago = 1; ago <= 29; ago++)
+        {
+            if (ago % 8 == 0)
+            {
+                continue;
+            }
+
+            var id = Guid.Parse($"30000000-0000-0000-0001-{ago:000000000000}");
+            if (await db.Deliveries.AnyAsync(delivery => delivery.Id == id, cancellationToken))
+            {
+                continue;
+            }
+
+            var sample = samples[ago % samples.Length];
+            var scale = 0.55m + (ago % 5) * 0.28m;
+            db.Deliveries.Add(PricedDelivery(id, $"П-20{ago:00}", now.AddDays(-ago).Date.AddHours(11), actors[ago % actors.Length],
+                Line(sample.Product, decimal.Round(sample.Qty * scale, 0), now.AddDays(21))));
         }
 
         await db.SaveChangesAsync(cancellationToken);

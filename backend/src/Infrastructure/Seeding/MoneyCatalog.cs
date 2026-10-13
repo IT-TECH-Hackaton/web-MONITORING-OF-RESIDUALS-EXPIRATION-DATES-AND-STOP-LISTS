@@ -22,6 +22,7 @@ internal static class MoneyCatalog
 
     public static readonly Guid BuyerDeliveryId = Guid.Parse("30000000-0000-0000-0000-000000000003");
     public static readonly Guid KitchenDeliveryId = Guid.Parse("30000000-0000-0000-0000-000000000004");
+    public static readonly Guid StoreDeliveryId = Guid.Parse("30000000-0000-0000-0000-000000000005");
 
     public static readonly (Guid Id, string Name, Unit Unit, decimal Price)[] Products =
     [

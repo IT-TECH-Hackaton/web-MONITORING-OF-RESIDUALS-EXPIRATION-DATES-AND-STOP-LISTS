@@ -1,4 +1,4 @@
-import { newId, type Unit } from "@repo/contracts";
+import { newId, type Delivery, type Unit } from "@repo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -8,6 +8,17 @@ import { Empty, ErrorText, formatWhen, FreshnessPill, Panel, Qty } from "../ui";
 type Line = { key: string; productId: string; name: string; unit: Unit; quantity: string; shelfLifeHours: string };
 
 const emptyLine = (): Line => ({ key: newId(), productId: "", name: "", unit: "G", quantity: "", shelfLifeHours: "48" });
+
+function nearestBatch(delivery: Delivery) {
+  return delivery.batches.slice().sort((a, b) => a.hoursLeft - b.hoursLeft)[0];
+}
+
+function productChips(delivery: Delivery) {
+  const names = [...new Set(delivery.batches.map((batch) => batch.productName))];
+  const shown = names.slice(0, 4);
+  const rest = names.length - shown.length;
+  return { shown, rest };
+}
 
 export function DeliveriesPage() {
   const { client } = useSession();
@@ -43,38 +54,21 @@ export function DeliveriesPage() {
     setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
   }
 
+  const rows = deliveries.data ?? [];
+  const maxBatches = Math.max(1, ...rows.map((delivery) => delivery.batches.length));
+
   return (
-    <>
-      <div className="page-title">
+    <div className="rep">
+      <header className="rep-head">
         <div>
           <h1>Поставки</h1>
           <p>Каждая позиция становится партией со своим сроком годности.</p>
         </div>
-        <Link to="/intake">Приёмка QR</Link>
-      </div>
-      <div className="split">
-        <Panel title="Журнал">
-          {deliveries.isLoading ? <p>Загрузка…</p> : null}
-          {deliveries.error ? <ErrorText error={deliveries.error} /> : null}
-          {deliveries.data?.length === 0 ? <Empty>Поставок пока нет.</Empty> : null}
-          {deliveries.data && deliveries.data.length > 0 ? (
-            <table>
-              <thead><tr><th>Номер</th><th>Дата</th><th>Партий</th></tr></thead>
-              <tbody>
-                {deliveries.data.map((delivery) => (
-                  <tr key={delivery.id} className="clickable">
-                    <td><Link to={`/deliveries/${delivery.id}`}>{delivery.number}</Link></td>
-                    <td>{formatWhen(delivery.createdAt)}</td>
-                    <td>{delivery.batches.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : null}
-        </Panel>
-        <Panel title="Новая поставка">
+        <Link to="/intake" className="btn-ghost">Приёмка QR</Link>
+      </header>
+      <Panel title="Новая поставка">
           <form className="form" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}>
-            <label>Номер<input value={number} onChange={(event) => setNumber(event.target.value)} required /></label>
+            <label className="del-number">Номер<input value={number} onChange={(event) => setNumber(event.target.value)} required /></label>
             {lines.map((line) => (
               <div className="line" key={line.key}>
                 <label>
@@ -111,8 +105,51 @@ export function DeliveriesPage() {
             </div>
           </form>
         </Panel>
-      </div>
-    </>
+      <Panel title="Журнал">
+        {deliveries.isLoading ? <p>Загрузка…</p> : null}
+        {deliveries.error ? <ErrorText error={deliveries.error} /> : null}
+        {rows.length === 0 && !deliveries.isLoading ? <Empty>Поставок пока нет.</Empty> : null}
+        {rows.length > 0 ? (
+          <div className="rep-scroll">
+            <table className="rep-table rep-staff">
+              <thead><tr><th>Номер</th><th>Дата</th><th>Состав</th><th className="num">Партий</th><th>Ближайший срок</th></tr></thead>
+              <tbody>
+                {rows.map((delivery) => {
+                  const chips = productChips(delivery);
+                  const nearest = nearestBatch(delivery);
+                  return (
+                    <tr key={delivery.id}>
+                      <td>
+                        <Link to={`/deliveries/${delivery.id}`} className="rep-person">
+                          <span className="rep-dot" style={{ background: "var(--accent)" }} />
+                          <span>{delivery.number}</span>
+                        </Link>
+                      </td>
+                      <td>{formatWhen(delivery.createdAt)}</td>
+                      <td>
+                        <div className="del-chips">
+                          {chips.shown.map((name) => <span key={name}>{name}</span>)}
+                          {chips.rest > 0 ? <span>+{chips.rest}</span> : null}
+                        </div>
+                      </td>
+                      <td className="num">
+                        <div className="rep-money">
+                          <strong>{delivery.batches.length}</strong>
+                          <span className="rep-track" aria-hidden="true">
+                            <span className="is-rose" style={{ width: `${Math.max(8, (delivery.batches.length / maxBatches) * 100)}%` }} />
+                          </span>
+                        </div>
+                      </td>
+                      <td>{nearest ? <FreshnessPill freshness={nearest.freshness} /> : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </Panel>
+    </div>
   );
 }
 
@@ -124,35 +161,50 @@ export function DeliveryPage() {
   if (delivery.error) return <ErrorText error={delivery.error} />;
   const data = delivery.data!;
   return (
-    <>
-      <div className="page-title">
+    <div className="rep">
+      <header className="rep-head">
         <div>
           <h1>{data.number}</h1>
-          <p>{formatWhen(data.createdAt)}{data.supplier ? ` · ${data.supplier}` : ""}</p>
+          <p>{formatWhen(data.createdAt)}{data.supplier ? ` · ${data.supplier}` : ""} · партий {data.batches.length}</p>
         </div>
-        <Link to="/deliveries">Все поставки</Link>
-      </div>
+        <Link to="/deliveries" className="btn-ghost">Все поставки</Link>
+      </header>
       <Panel title="Партии">
-        <table>
-          <thead><tr><th>Продукт</th><th>Пришло</th><th>Остаток</th><th>Годен до</th><th>Сертификат</th><th></th></tr></thead>
-          <tbody>
-            {data.batches.map((batch) => (
-              <tr key={batch.id}>
-                <td><Link to={`/stock/${batch.productId}`}>{batch.productName}</Link></td>
-                <td><Qty value={batch.quantityInitial} unit={batch.unit} /></td>
-                <td><Qty value={batch.quantityRemaining} unit={batch.unit} /></td>
-                <td>{formatWhen(batch.expiresAt)}</td>
-                <td className="reason">
-                  {batch.certificateNumber
-                    ? `${batch.certificateNumber}, ${batch.certificateIssuer ?? ""} до ${batch.certificateExpiresAt ? formatWhen(batch.certificateExpiresAt) : "—"}`
-                    : "без QR-сверки"}
-                </td>
-                <td><FreshnessPill freshness={batch.freshness} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="rep-scroll">
+          <table className="rep-table rep-staff">
+            <thead><tr><th>Продукт</th><th className="num">Пришло</th><th className="num">Остаток</th><th>Годен до</th><th>Сертификат</th><th></th></tr></thead>
+            <tbody>
+              {data.batches.map((batch) => {
+                const share = batch.quantityInitial <= 0 ? 0 : Math.max(4, (batch.quantityRemaining / batch.quantityInitial) * 100);
+                return (
+                  <tr key={batch.id}>
+                    <td>
+                      <Link to={`/stock/${batch.productId}`} className="rep-person">
+                        <span className="rep-dot" style={{ background: "var(--amber)" }} />
+                        <span>{batch.productName}</span>
+                      </Link>
+                    </td>
+                    <td className="num"><Qty value={batch.quantityInitial} unit={batch.unit} /></td>
+                    <td className="num">
+                      <div className="rep-money">
+                        <strong><Qty value={batch.quantityRemaining} unit={batch.unit} /></strong>
+                        <span className="rep-track" aria-hidden="true"><span className="is-amber" style={{ width: `${share}%` }} /></span>
+                      </div>
+                    </td>
+                    <td>{formatWhen(batch.expiresAt)}</td>
+                    <td className="reason">
+                      {batch.certificateNumber
+                        ? `${batch.certificateNumber}, ${batch.certificateIssuer ?? ""} до ${batch.certificateExpiresAt ? formatWhen(batch.certificateExpiresAt) : "—"}`
+                        : "без QR-сверки"}
+                    </td>
+                    <td><FreshnessPill freshness={batch.freshness} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Panel>
-    </>
+    </div>
   );
 }

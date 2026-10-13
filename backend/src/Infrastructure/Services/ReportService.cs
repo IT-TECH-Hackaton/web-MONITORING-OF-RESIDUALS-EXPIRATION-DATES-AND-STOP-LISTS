@@ -78,6 +78,94 @@ public sealed class ReportService(AppDbContext db)
         return new MoneyReport(decimal.Round(purchaseRub, 2), decimal.Round(revenue, 2), decimal.Round(cost, 2), decimal.Round(waste, 2), decimal.Round(revenue - cost, 2), staff, purchases, dishes);
     }
 
+    /// <summary>
+    /// Закупки за последние days суток, считая сегодняшний день. days пустой или 0 — за всё время.
+    /// День берётся из даты поставки. Списания — срок и акты кухни, не продажа в заказ.
+    /// </summary>
+    public async Task<SpendReport> SpendAsync(int? days, CancellationToken cancellationToken)
+    {
+        var from = days is > 0
+            ? DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(1 - days.Value), DateTimeKind.Utc)
+            : (DateTime?)null;
+        var batches = await db.Batches.AsNoTracking()
+            .Include(batch => batch.Product)
+            .Include(batch => batch.Delivery)
+            .ToListAsync(cancellationToken);
+        if (from is not null)
+        {
+            batches = batches.Where(batch => batch.Delivery.CreatedAt >= from).ToList();
+        }
+
+        var users = await db.Users.AsNoTracking().ToDictionaryAsync(user => user.Id, cancellationToken);
+        var spentByDay = batches
+            .GroupBy(batch => DateOnly.FromDateTime(batch.Delivery.CreatedAt))
+            .ToDictionary(
+                group => group.Key,
+                group => new PurchaseDayRow(
+                    group.Key,
+                    decimal.Round(group.Sum(batch => batch.QuantityInitial * batch.UnitCost), 2),
+                    group.Select(batch => batch.DeliveryId).Distinct().Count()));
+        var endDay = DateOnly.FromDateTime(DateTime.UtcNow);
+        var startDay = from is null
+            ? (spentByDay.Count == 0 ? endDay.AddDays(-29) : spentByDay.Keys.Min())
+            : DateOnly.FromDateTime(from.Value);
+        if (startDay < endDay.AddDays(-89))
+        {
+            startDay = endDay.AddDays(-89);
+        }
+
+        var dayRows = new List<PurchaseDayRow>();
+        for (var day = startDay; day <= endDay; day = day.AddDays(1))
+        {
+            dayRows.Add(spentByDay.TryGetValue(day, out var row) ? row : new PurchaseDayRow(day, 0, 0));
+        }
+        var people = batches
+            .GroupBy(batch => batch.Delivery.ReceivedBy)
+            .Select(group =>
+            {
+                var user = group.Key is Guid id && users.TryGetValue(id, out var found) ? found : null;
+                var name = user is null || string.IsNullOrWhiteSpace(user.DisplayName) ? user?.Login ?? "Без сотрудника" : user.DisplayName;
+                return new SpendPersonRow(
+                    name,
+                    user?.Role.ToString() ?? "",
+                    decimal.Round(group.Sum(batch => batch.QuantityInitial * batch.UnitCost), 2),
+                    group.Select(batch => batch.DeliveryId).Distinct().Count());
+            })
+            .Where(row => row.Rub > 0)
+            .OrderByDescending(row => row.Rub)
+            .ToList();
+        var products = batches
+            .GroupBy(batch => batch.ProductId)
+            .Select(group =>
+            {
+                var product = group.First().Product;
+                return new PurchaseMoneyRow(product.Id, product.Name, product.Unit, group.Sum(batch => batch.QuantityInitial), decimal.Round(group.Sum(batch => batch.QuantityInitial * batch.UnitCost), 2));
+            })
+            .Where(row => row.Rub > 0)
+            .OrderByDescending(row => row.Rub)
+            .ToList();
+
+        var movements = await db.StockMovements.AsNoTracking()
+            .Include(movement => movement.Batch)
+            .Where(movement => movement.Type == MovementType.ExpiryWriteOff || movement.Type == MovementType.KitchenWriteOff)
+            .ToListAsync(cancellationToken);
+        if (from is not null)
+        {
+            movements = movements.Where(movement => movement.CreatedAt >= from).ToList();
+        }
+
+        var waste = movements
+            .GroupBy(movement => movement.Type == MovementType.ExpiryWriteOff
+                ? nameof(WriteOffReason.Expiry)
+                : string.IsNullOrWhiteSpace(movement.Reason) ? nameof(WriteOffReason.Waste) : movement.Reason)
+            .Select(group => new WasteMoneyRow(group.Key, decimal.Round(group.Sum(movement => movement.Quantity * movement.Batch.UnitCost), 2)))
+            .Where(row => row.Rub > 0)
+            .OrderByDescending(row => row.Rub)
+            .ToList();
+
+        return new SpendReport(decimal.Round(batches.Sum(batch => batch.QuantityInitial * batch.UnitCost), 2), dayRows, people, products, waste);
+    }
+
     private static decimal RecipeCost(Dish dish, IReadOnlyList<Batch> batches)
     {
         decimal sum = 0;

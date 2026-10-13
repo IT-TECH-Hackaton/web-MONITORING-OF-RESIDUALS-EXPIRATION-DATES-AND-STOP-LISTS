@@ -398,6 +398,10 @@ public static class EndpointExtensions
             Results.Ok(await stock.DeficitsAsync(cancellationToken)))
             .Docs("Аналитика", "Дефицит", "По отказанным заказам: сколько раз не хватило продукта и сколько доступно сейчас.")
             .Ok<IReadOnlyList<DeficitView>>();
+        group.MapGet("/spend", async (int? days, ReportService reports, CancellationToken cancellationToken) =>
+            Results.Ok(await reports.SpendAsync(days, cancellationToken)))
+            .Docs("Аналитика", "Закупки за период", "days — последние сутки, включая сегодня. 0 или пусто — от первой поставки до сегодня, не длиннее 90 дней. Дни без поставок приходят с нулём. Списания — срок и акты, в рублях по цене партии.")
+            .Ok<SpendReport>();
         group.MapGet("/weekly-forecast", async (StockReadModel stock, CancellationToken cancellationToken) =>
             Results.Ok(await stock.WeeklyForecastAsync(cancellationToken)))
             .Docs("Аналитика", "Прогноз на неделю", "Темп заказов с понедельника растягивается на 7 дней. Партии, которые истекут раньше дня, в этот день уже не считаются.")

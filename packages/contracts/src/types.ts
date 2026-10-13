@@ -103,6 +103,14 @@ export type StockItem = {
   purchasePrice: number;
 };
 
+export type SpendReport = {
+  totalRub: number;
+  days: { day: string; rub: number; deliveries: number }[];
+  people: { name: string; role: string; rub: number; deliveries: number }[];
+  products: { productId: string; productName: string; unit: Unit; quantity: number; rub: number }[];
+  waste: { reason: string; rub: number }[];
+};
+
 export type MoneyReport = {
   purchaseRub: number;
   revenueRub: number;

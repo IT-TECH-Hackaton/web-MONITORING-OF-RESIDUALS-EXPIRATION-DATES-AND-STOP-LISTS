@@ -10,4 +10,5 @@ web-build/
 .env.local
 TestResults/
 .idea/
+apps/web/public/models/*.tar.gz
 .tools/

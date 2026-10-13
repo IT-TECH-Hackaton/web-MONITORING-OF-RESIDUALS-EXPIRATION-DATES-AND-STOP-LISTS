@@ -144,6 +144,20 @@ public sealed record MoneyReport(
     IReadOnlyList<PurchaseMoneyRow> Purchases,
     IReadOnlyList<DishMoneyRow> Dishes);
 
+public sealed record PurchaseDayRow(DateOnly Day, decimal Rub, int Deliveries);
+
+public sealed record SpendPersonRow(string Name, string Role, decimal Rub, int Deliveries);
+
+public sealed record WasteMoneyRow(string Reason, decimal Rub);
+
+/// <summary>Закупки за период: по дням, по людям, по продуктам, плюс списания в рублях.</summary>
+public sealed record SpendReport(
+    decimal TotalRub,
+    IReadOnlyList<PurchaseDayRow> Days,
+    IReadOnlyList<SpendPersonRow> People,
+    IReadOnlyList<PurchaseMoneyRow> Products,
+    IReadOnlyList<WasteMoneyRow> Waste);
+
 public sealed record WriteOffView(Guid ProductId, string ProductName, Unit Unit, MovementType Type, decimal Quantity, string? Reason);
 
 public sealed record DeficitView(

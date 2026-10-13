@@ -39,30 +39,33 @@ function speechEngine() {
   return host.SpeechRecognition ?? host.webkitSpeechRecognition ?? null;
 }
 
+const russianModelUrl = "/models/vosk-model-small-ru-0.22.tar.gz";
+let russianModel: Promise<import("vosk-browser").VoskModel> | null = null;
+
 function FloorListen({ onSave }: { onSave: (text: string) => void }) {
   const [listening, setListening] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const engine = useRef<SpeechEngine | null>(null);
   const finalText = useRef("");
+  const stopListen = useRef<(() => void) | null>(null);
 
-  useEffect(() => () => {
-    engine.current?.abort();
-    engine.current = null;
-  }, []);
+  useEffect(() => () => stopListen.current?.(), []);
 
-  function stop() {
-    engine.current?.stop();
-    setListening(false);
+  function remember(chunk: string, partial = "") {
+    const said = chunk.trim();
+    if (said) finalText.current = `${finalText.current} ${said}`.trim();
+    setText(`${finalText.current} ${partial}`.trim());
   }
 
-  function start() {
-    const Ctor = speechEngine();
-    if (!Ctor) {
-      setError("Этот браузер не слышит речь. Заметку можно набрать вручную.");
-      return;
-    }
-    engine.current?.abort();
+  function stop() {
+    stopListen.current?.();
+    stopListen.current = null;
+    setListening(false);
+    setStatus(null);
+  }
+
+  function startNative(Ctor: new () => SpeechEngine) {
     const rec = new Ctor();
     rec.lang = "ru-RU";
     rec.continuous = true;
@@ -71,21 +74,80 @@ function FloorListen({ onSave }: { onSave: (text: string) => void }) {
       let interim = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const piece = event.results[index][0].transcript;
-        if (event.results[index].isFinal) finalText.current = `${finalText.current} ${piece}`.trim();
+        if (event.results[index].isFinal) remember(piece);
         else interim += piece;
       }
-      setText(`${finalText.current} ${interim}`.trim());
+      if (interim) setText(`${finalText.current} ${interim}`.trim());
     };
     rec.onerror = (event) => {
       if (event.error === "aborted" || event.error === "no-speech") return;
-      setError("Микрофон не ответил.");
+      setError(event.error === "not-allowed" ? "Разрешите микрофон в браузере." : "Микрофон не ответил.");
       setListening(false);
     };
     rec.onend = () => setListening(false);
-    engine.current = rec;
+    stopListen.current = () => rec.abort();
     setError(null);
     setListening(true);
     rec.start();
+  }
+
+  async function startFallback() {
+    setStatus("Загружаю словарь речи…");
+    setListening(true);
+    setError(null);
+    const { createModel } = await import("vosk-browser");
+    russianModel ??= createModel(russianModelUrl);
+    const model = await russianModel;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+    });
+    const audio = new AudioContext();
+    const recognizer = new model.KaldiRecognizer(audio.sampleRate);
+    recognizer.on("result", (message) => remember(message.result.text));
+    recognizer.on("partialresult", (message) => setText(`${finalText.current} ${message.result.partial}`.trim()));
+    const source = audio.createMediaStreamSource(stream);
+    const node = audio.createScriptProcessor(4096, 1, 1);
+    node.onaudioprocess = (event) => {
+      try {
+        recognizer.acceptWaveform(event.inputBuffer);
+      } catch {
+        /* кусок тишины можно пропустить */
+      }
+    };
+    const mute = audio.createGain();
+    mute.gain.value = 0;
+    source.connect(node);
+    node.connect(mute);
+    mute.connect(audio.destination);
+    stopListen.current = () => {
+      recognizer.retrieveFinalResult();
+      recognizer.remove();
+      node.disconnect();
+      source.disconnect();
+      mute.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      void audio.close();
+    };
+    setStatus(null);
+  }
+
+  async function start() {
+    if (!window.isSecureContext) {
+      setError("Микрофон открывается с localhost или https. По этому адресу браузер его прячет.");
+      return;
+    }
+    const Ctor = speechEngine();
+    if (Ctor) {
+      startNative(Ctor);
+      return;
+    }
+    try {
+      await startFallback();
+    } catch {
+      setListening(false);
+      setStatus(null);
+      setError("Микрофон не включился. Разрешите доступ или наберите заметку вручную.");
+    }
   }
 
   function save() {
@@ -104,13 +166,14 @@ function FloorListen({ onSave }: { onSave: (text: string) => void }) {
         className={listening ? "floor-mic-btn is-on" : "floor-mic-btn"}
         aria-pressed={listening}
         aria-label={listening ? "Остановить запись" : "Слушать разговор"}
-        onClick={listening ? stop : start}
+        onClick={() => { if (listening) stop(); else void start(); }}
       >
         <span className="floor-mic-core" />
       </button>
       <span className="chip-label">{listening ? "Стоп" : "Слушать"}</span>
       {error ? <p className="error-text">{error}</p> : null}
-      {listening && !text ? <p className="reason">Слушаю…</p> : null}
+      {status ? <p className="reason">{status}</p> : null}
+      {listening && !status && !text ? <p className="reason">Слушаю…</p> : null}
       {text ? <p className="reason floor-transcript">{text}</p> : null}
       {text ? (
         <button type="button" className="btn-ghost note-add" onClick={save}>В заметку</button>
