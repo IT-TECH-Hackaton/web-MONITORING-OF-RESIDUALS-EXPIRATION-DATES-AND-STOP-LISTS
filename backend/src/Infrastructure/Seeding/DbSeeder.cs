@@ -49,10 +49,10 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         {
             await EnsureMoneyAsync(cancellationToken);
             await SeedShiftAsync(cancellationToken);
+            await SeedPurchaseLinesAsync(cancellationToken);
             return;
         }
 
-        var now = clock.UtcNow;
         db.Products.AddRange(
             Product(SalmonId, "Лосось", Unit.G),
             Product(MozzarellaId, "Моцарелла", Unit.G),
@@ -63,39 +63,10 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
             Product(CoffeeId, "Кофе", Unit.G),
             Product(MilkId, "Молоко", Unit.Ml));
 
-        var pastaDish = Dish(Guid.Parse("20000000-0000-0000-0000-000000000001"), "Паста с лососем",
-            (SalmonId, 180m), (PastaId, 100m), (CreamId, 80m));
-        var pizza = Dish(Guid.Parse("20000000-0000-0000-0000-000000000002"), "Пицца Маргарита",
-            (MozzarellaId, 150m), (TomatoId, 80m), (BasilId, 5m));
-        var caprese = Dish(Guid.Parse("20000000-0000-0000-0000-000000000003"), "Салат Капрезе",
-            (MozzarellaId, 120m), (TomatoId, 100m), (BasilId, 8m));
-        var cappuccino = Dish(Guid.Parse("20000000-0000-0000-0000-000000000004"), "Капучино",
-            (CoffeeId, 18m), (MilkId, 150m));
-        db.Dishes.AddRange(pastaDish, pizza, caprese, cappuccino);
-
-        db.Deliveries.Add(Delivery(
-            Guid.Parse("30000000-0000-0000-0000-000000000001"),
-            "П-1001",
-            now.AddDays(-1),
-            Batch(SalmonId, 2000, now.AddDays(8)),
-            Batch(MozzarellaId, 2500, now.AddDays(12)),
-            Batch(TomatoId, 3000, now.AddDays(5)),
-            Batch(BasilId, 200, now.AddDays(4)),
-            Batch(PastaId, 4000, now.AddDays(30)),
-            Batch(CreamId, 2000, now.AddDays(6)),
-            Batch(CoffeeId, 1000, now.AddDays(60)),
-            Batch(MilkId, 5000, now.AddDays(3))));
-
-        db.Deliveries.Add(Delivery(
-            Guid.Parse("30000000-0000-0000-0000-000000000002"),
-            "П-1002",
-            now.AddHours(-6),
-            Batch(MozzarellaId, 400, now.AddHours(6)),
-            Batch(SalmonId, 500, now.AddHours(30))));
-
         await db.SaveChangesAsync(cancellationToken);
         await EnsureMoneyAsync(cancellationToken);
         await SeedShiftAsync(cancellationToken);
+        await SeedPurchaseLinesAsync(cancellationToken);
     }
 
     private async Task EnsureMoneyAsync(CancellationToken cancellationToken)
@@ -115,7 +86,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
             {
                 db.Products.Add(new Product { Id = item.Id, Name = item.Name, Unit = item.Unit, PurchasePrice = item.Price, IsActive = true });
             }
-            else if (product.PurchasePrice == 0)
+            else
             {
                 product.PurchasePrice = item.Price;
             }
@@ -135,7 +106,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
                     Ingredients = item.Lines.Select(line => new DishIngredient { DishId = item.Id, ProductId = line.ProductId, Quantity = line.Quantity }).ToList(),
                 });
             }
-            else if (dish.SalePrice == 0)
+            else
             {
                 dish.SalePrice = item.Sale;
             }
@@ -145,7 +116,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
 
         foreach (var item in MoneyCatalog.Products)
         {
-            await db.Batches.Where(batch => batch.ProductId == item.Id && batch.UnitCost == 0)
+            await db.Batches.Where(batch => batch.ProductId == item.Id)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(batch => batch.UnitCost, item.Price), cancellationToken);
         }
 
@@ -153,72 +124,63 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         var chef = await db.Users.FirstAsync(user => user.Login == "kitchen", cancellationToken);
         var store = await db.Users.FirstAsync(user => user.Login == "store", cancellationToken);
         var manager = await db.Users.FirstAsync(user => user.Login == "manager", cancellationToken);
-        await db.Deliveries.Where(delivery => delivery.ReceivedBy == null)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(delivery => delivery.ReceivedBy, manager.Id), cancellationToken);
+        await ReplaceDemoInvoicesAsync(manager.Id, buyer.Id, chef.Id, store.Id, cancellationToken);
+    }
+
+    private async Task ReplaceDemoInvoicesAsync(Guid managerId, Guid buyerId, Guid chefId, Guid storeId, CancellationToken cancellationToken)
+    {
+        var seedIds = MoneyCatalog.Invoices.Select(item => item.Id).ToHashSet();
+        var old = await db.Deliveries
+            .Include(delivery => delivery.Batches)
+            .ThenInclude(batch => batch.Movements)
+            .Where(delivery => seedIds.Contains(delivery.Id)
+                || delivery.Number.StartsWith("П-20")
+                || delivery.Number == "П-1001"
+                || delivery.Number == "П-1002"
+                || delivery.Number == "П-1108"
+                || delivery.Number == "П-1114"
+                || delivery.Number == "П-1120")
+            .ToListAsync(cancellationToken);
+        if (old.Count > 0)
+        {
+            db.Deliveries.RemoveRange(old);
+            await db.SaveChangesAsync(cancellationToken);
+        }
 
         var now = clock.UtcNow;
-        if (!await db.Deliveries.AnyAsync(delivery => delivery.Id == MoneyCatalog.BuyerDeliveryId, cancellationToken))
+        var receivers = new Dictionary<Guid, Guid>
         {
-            db.Deliveries.Add(PricedDelivery(MoneyCatalog.BuyerDeliveryId, "П-1108", now.AddDays(-2), buyer.Id,
-                Line(MoneyCatalog.Chicken, 4000, now.AddDays(4)),
-                Line(MoneyCatalog.Beef, 2500, now.AddDays(5)),
-                Line(MoneyCatalog.Shrimp, 900, now.AddDays(2)),
-                Line(MoneyCatalog.Rice, 3000, now.AddDays(40)),
-                Line(MoneyCatalog.Lettuce, 800, now.AddDays(3)),
-                Line(MoneyCatalog.Egg, 90, now.AddDays(14)),
-                Line(MoneyCatalog.Butter, 600, now.AddDays(20))));
-        }
+            [MoneyCatalog.MetroId] = managerId,
+            [MoneyCatalog.DairyPrevId] = buyerId,
+            [MoneyCatalog.FishMainId] = buyerId,
+            [MoneyCatalog.MeatId] = buyerId,
+            [MoneyCatalog.DairyId] = storeId,
+            [MoneyCatalog.FishShortId] = chefId,
+            [MoneyCatalog.VegId] = chefId,
+            [MoneyCatalog.ExpiredVegId] = chefId,
+        };
 
-        if (!await db.Deliveries.AnyAsync(delivery => delivery.Id == MoneyCatalog.KitchenDeliveryId, cancellationToken))
+        foreach (var invoice in MoneyCatalog.Invoices)
         {
-            db.Deliveries.Add(PricedDelivery(MoneyCatalog.KitchenDeliveryId, "П-1114", now.AddHours(-5), chef.Id,
-                Line(MoneyCatalog.Onion, 1500, now.AddDays(10)),
-                Line(MoneyCatalog.Lemon, 700, now.AddDays(6)),
-                Line(MoneyCatalog.Garlic, 300, now.AddDays(20)),
-                Line(MoneyCatalog.Potato, 4000, now.AddDays(15))));
-        }
-
-        if (!await db.Deliveries.AnyAsync(delivery => delivery.Id == MoneyCatalog.StoreDeliveryId, cancellationToken))
-        {
-            db.Deliveries.Add(PricedDelivery(MoneyCatalog.StoreDeliveryId, "П-1120", now.AddHours(-8), store.Id,
-                Line(MoneyCatalog.Flour, 20000, now.AddDays(60)),
-                Line(MoneyCatalog.Oil, 5000, now.AddDays(90)),
-                Line(MoneyCatalog.Sugar, 10000, now.AddDays(180)),
-                Line(MoneyCatalog.Cucumber, 4000, now.AddDays(5)),
-                Line(MoneyCatalog.Butter, 2000, now.AddDays(20))));
-        }
-
-        var actors = new[] { manager.Id, buyer.Id, store.Id, chef.Id };
-        (Guid Product, decimal Qty)[] samples =
-        [
-            (SalmonId, 800),
-            (CoffeeId, 420),
-            (MozzarellaId, 1400),
-            (MoneyCatalog.Beef, 1800),
-            (MoneyCatalog.Chicken, 2600),
-            (MoneyCatalog.Shrimp, 700),
-            (MoneyCatalog.Butter, 900),
-            (MoneyCatalog.Flour, 9000),
-            (MilkId, 7000),
-            (MoneyCatalog.Egg, 36),
-        ];
-        for (var ago = 1; ago <= 29; ago++)
-        {
-            if (ago % 8 == 0)
+            var at = DateTime.SpecifyKind(
+                now.Date.AddDays(-invoice.DaysAgo).AddHours(invoice.Hour).AddMinutes(invoice.Minute),
+                DateTimeKind.Utc);
+            if (at > now)
             {
-                continue;
+                at = now.AddMinutes(-40);
             }
 
-            var id = Guid.Parse($"30000000-0000-0000-0001-{ago:000000000000}");
-            if (await db.Deliveries.AnyAsync(delivery => delivery.Id == id, cancellationToken))
-            {
-                continue;
-            }
-
-            var sample = samples[ago % samples.Length];
-            var scale = 0.55m + (ago % 5) * 0.28m;
-            db.Deliveries.Add(PricedDelivery(id, $"П-20{ago:00}", now.AddDays(-ago).Date.AddHours(11), actors[ago % actors.Length],
-                Line(sample.Product, decimal.Round(sample.Qty * scale, 0), now.AddDays(21))));
+            var batches = invoice.Lines.Select(line => Line(
+                line.ProductId,
+                line.Quantity,
+                at.AddDays(line.DaysUntilExpiry).AddHours(line.ExtraHours))).ToArray();
+            db.Deliveries.Add(PricedDelivery(
+                invoice.Id,
+                invoice.Number,
+                at,
+                receivers.GetValueOrDefault(invoice.Id, managerId),
+                invoice.Supplier,
+                batches));
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -249,9 +211,9 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         }
     }
 
-    private Delivery PricedDelivery(Guid id, string number, DateTime at, Guid userId, params Batch[] batches)
+    private Delivery PricedDelivery(Guid id, string number, DateTime at, Guid userId, string supplier, params Batch[] batches)
     {
-        var delivery = new Delivery { Id = id, Number = number, CreatedAt = at, ReceivedBy = userId, Batches = batches.ToList() };
+        var delivery = new Delivery { Id = id, Number = number, Supplier = supplier, CreatedAt = at, ReceivedBy = userId, Batches = batches.ToList() };
         foreach (var batch in batches)
         {
             batch.DeliveryId = id;
@@ -285,50 +247,118 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
 
     private async Task SeedShiftAsync(CancellationToken cancellationToken)
     {
-        if (await db.ShiftDishes.AnyAsync(cancellationToken))
-        {
-            return;
-        }
-
-        var pasta = Guid.Parse("20000000-0000-0000-0000-000000000001");
-        var pizza = Guid.Parse("20000000-0000-0000-0000-000000000002");
-        var caprese = Guid.Parse("20000000-0000-0000-0000-000000000003");
-        var coffee = Guid.Parse("20000000-0000-0000-0000-000000000004");
-        if (!await db.Dishes.AnyAsync(dish => dish.Id == pasta, cancellationToken))
+        if (!await db.Dishes.AnyAsync(dish => dish.Id == MoneyCatalog.PastaDishId, cancellationToken))
         {
             return;
         }
 
         var now = clock.UtcNow;
         var chef = await db.Users.FirstOrDefaultAsync(user => user.Login == "kitchen", cancellationToken);
-        db.ShiftDishes.AddRange(
-            new ShiftDish { DishId = pasta, PrepPortions = 3, IsPriority = true },
-            new ShiftDish { DishId = caprese, PrepPortions = 4, IsPriority = true },
-            new ShiftDish
+        var fresh = !await db.ShiftDishes.AnyAsync(cancellationToken);
+
+        await UpsertShiftAsync(MoneyCatalog.PastaDishId, 3, false, true, null, null, cancellationToken);
+        await UpsertShiftAsync(MoneyCatalog.CapreseDishId, 4, false, true, null, null, cancellationToken);
+        await UpsertShiftAsync(MoneyCatalog.PizzaDishId, 0, true, false, nameof(StopReason.Quality), "Тесто не прошло", cancellationToken);
+        await UpsertShiftAsync(MoneyCatalog.CoffeeDishId, 0, true, false, nameof(StopReason.Equipment), "Кофемашина", cancellationToken);
+        await UpsertShiftAsync(MoneyCatalog.CheesecakeDishId, 1, false, false, null, null, cancellationToken);
+
+        if (fresh)
+        {
+            db.ShiftHistory.AddRange(
+                History(MoneyCatalog.PizzaDishId, "шеф", "Стоп: качество — тесто не прошло", now.AddHours(-5)),
+                History(MoneyCatalog.CoffeeDishId, "су", "Стоп: техника — кофемашина", now.AddHours(-2)),
+                History(MoneyCatalog.PastaDishId, "шеф", "В приоритет, заготовки 3", now.AddHours(-1)),
+                History(MoneyCatalog.CapreseDishId, "шеф", "В приоритет, заготовки 4", now.AddHours(-1)),
+                History(MoneyCatalog.CheesecakeDishId, "шеф", "Заготовка 1 порция — после заказа уйдёт в стоп", now.AddMinutes(-20)));
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task UpsertShiftAsync(
+        Guid dishId,
+        int portions,
+        bool stopped,
+        bool priority,
+        string? reason,
+        string? note,
+        CancellationToken cancellationToken)
+    {
+        if (!await db.Dishes.AnyAsync(dish => dish.Id == dishId, cancellationToken))
+        {
+            return;
+        }
+
+        var row = await db.ShiftDishes.FirstOrDefaultAsync(item => item.DishId == dishId, cancellationToken);
+        var chef = await db.Users.FirstOrDefaultAsync(user => user.Login == "kitchen", cancellationToken);
+        if (row is null)
+        {
+            db.ShiftDishes.Add(new ShiftDish
             {
-                DishId = pizza,
-                PrepPortions = 0,
-                IsStopped = true,
-                StopReason = nameof(StopReason.Quality),
-                StopNote = "Тесто не прошло",
-                StoppedAt = now.AddHours(-5),
-                StoppedBy = chef?.Id,
-            },
-            new ShiftDish
-            {
-                DishId = coffee,
-                PrepPortions = 0,
-                IsStopped = true,
-                StopReason = nameof(StopReason.Equipment),
-                StopNote = "Кофемашина",
-                StoppedAt = now.AddHours(-2),
-                StoppedBy = chef?.Id,
+                DishId = dishId,
+                PrepPortions = portions,
+                IsStopped = stopped,
+                IsPriority = priority,
+                StopReason = reason,
+                StopNote = note,
+                StoppedAt = stopped ? clock.UtcNow.AddHours(-2) : null,
+                StoppedBy = stopped ? chef?.Id : null,
             });
-        db.ShiftHistory.AddRange(
-            History(pizza, "шеф", "Стоп: качество — тесто не прошло", now.AddHours(-5)),
-            History(coffee, "су", "Стоп: техника — кофемашина", now.AddHours(-2)),
-            History(pasta, "шеф", "В приоритет, заготовки 3", now.AddHours(-1)),
-            History(caprese, "шеф", "В приоритет, заготовки 4", now.AddHours(-1)));
+            return;
+        }
+
+        row.PrepPortions = portions;
+        row.IsStopped = stopped;
+        row.IsPriority = priority;
+        row.StopReason = reason;
+        row.StopNote = note;
+        if (stopped)
+        {
+            row.StoppedAt ??= clock.UtcNow.AddHours(-2);
+            row.StoppedBy ??= chef?.Id;
+        }
+        else
+        {
+            row.StoppedAt = null;
+            row.StoppedBy = null;
+        }
+    }
+
+    private async Task SeedPurchaseLinesAsync(CancellationToken cancellationToken)
+    {
+        if (await db.PurchaseLines.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+
+        var chef = await db.Users.FirstOrDefaultAsync(user => user.Login == "kitchen", cancellationToken);
+        if (chef is null)
+        {
+            return;
+        }
+
+        var now = clock.UtcNow;
+        db.PurchaseLines.AddRange(
+            new PurchaseLine
+            {
+                Id = Guid.Parse("40000000-0000-0000-0000-000000000001"),
+                ProductId = CreamId,
+                Quantity = 2000,
+                Note = "на банкет в пятницу",
+                Source = PurchaseSource.Chef,
+                RequestedBy = chef.Id,
+                CreatedAt = now.AddHours(-3),
+            },
+            new PurchaseLine
+            {
+                Id = Guid.Parse("40000000-0000-0000-0000-000000000002"),
+                ProductId = MozzarellaId,
+                Quantity = 800,
+                Note = "вчерашняя партия слабая, возьми другую",
+                Source = PurchaseSource.Chef,
+                RequestedBy = chef.Id,
+                CreatedAt = now.AddHours(-1),
+            });
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -357,45 +387,4 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         IsActive = true,
     };
 
-    private static Dish Dish(Guid id, string name, params (Guid ProductId, decimal Quantity)[] lines) => new()
-    {
-        Id = id,
-        Name = name,
-        IsActive = true,
-        Ingredients = lines.Select(line => new DishIngredient
-        {
-            DishId = id,
-            ProductId = line.ProductId,
-            Quantity = line.Quantity,
-        }).ToList(),
-    };
-
-    private static Delivery Delivery(Guid id, string number, DateTime createdAt, params Batch[] batches)
-    {
-        var delivery = new Delivery { Id = id, Number = number, CreatedAt = createdAt, Batches = batches.ToList() };
-        foreach (var batch in batches)
-        {
-            batch.DeliveryId = id;
-            batch.ReceivedAt = createdAt;
-            batch.Movements.Add(new StockMovement
-            {
-                Id = Guid.NewGuid(),
-                Type = MovementType.Receipt,
-                Quantity = batch.QuantityInitial,
-                CreatedAt = createdAt,
-            });
-        }
-
-        return delivery;
-    }
-
-    private static Batch Batch(Guid productId, decimal quantity, DateTime expiresAt) => new()
-    {
-        Id = Guid.NewGuid(),
-        ProductId = productId,
-        QuantityInitial = quantity,
-        QuantityRemaining = quantity,
-        ExpiresAt = expiresAt,
-        Status = BatchStatus.Active,
-    };
 }

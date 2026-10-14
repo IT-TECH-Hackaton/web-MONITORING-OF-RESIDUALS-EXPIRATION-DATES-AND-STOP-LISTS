@@ -21,7 +21,7 @@ export function WeeklyForecastPanel({
         {" "}{forecastBasis(report.ordersThisWeek)}
       </p>}
       {!plain && items.some((item) => item.shortfall > 0) ? (
-        <PurchaseButton label="В заявку всё, чего не хватит" />
+        <PurchaseButton label="В заказ всё, чего не хватит" />
       ) : null}
       {items.length === 0 ? (
         <Empty>

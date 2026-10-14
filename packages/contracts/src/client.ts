@@ -1,4 +1,4 @@
-import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type QrIntakeResult, type Session, type ShiftHistoryEntry, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
+import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Session, type ShiftHistoryEntry, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
 
 export type TokenStore = {
   getAccess: () => string | null;
@@ -88,8 +88,23 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     },
     deliveries: () => request("/api/deliveries").then((response) => json<Delivery[]>(response)),
     delivery: (id: string) => request(`/api/deliveries/${id}`).then((response) => json<Delivery>(response)),
-    createDelivery: (input: { id: string; number: string; createdAt?: string | null; items: DeliveryLineInput[] }) =>
+    createDelivery: (input: { id: string; number: string; createdAt?: string | null; supplier?: string | null; items: DeliveryLineInput[] }) =>
       request("/api/deliveries", { method: "POST", body: JSON.stringify(input) }).then((response) => json<Delivery>(response)),
+    purchaseLines: (open = true) =>
+      request(`/api/purchase-lines?open=${open}`).then((response) => json<PurchaseLine[]>(response)),
+    addPurchaseLine: (input: { productId: string; quantity: number; note?: string | null }) =>
+      request("/api/purchase-lines", { method: "POST", body: JSON.stringify(input) }).then((response) => json<PurchaseLine>(response)),
+    cancelPurchaseLine: (id: string) =>
+      request(`/api/purchase-lines/${id}`, { method: "DELETE" }).then(async (response) => {
+        if (!response.ok) {
+          await json(response);
+        }
+      }),
+    addForecastToOrder: (productIds?: string[]) =>
+      request("/api/analytics/purchase-lines", {
+        method: "POST",
+        body: JSON.stringify({ productIds: productIds ?? null }),
+      }).then((response) => json<{ count: number }>(response)),
     qrSample: (valid: boolean) =>
       request(`/api/deliveries/qr-sample?valid=${valid}`).then((response) => json<{ payload: string }>(response)),
     scanDelivery: (payload: string) =>

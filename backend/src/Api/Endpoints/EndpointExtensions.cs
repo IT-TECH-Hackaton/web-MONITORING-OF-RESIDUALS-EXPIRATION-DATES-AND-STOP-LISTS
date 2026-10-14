@@ -149,7 +149,7 @@ public static class EndpointExtensions
             }
 
             var result = await deliveries.ReceiveAsync(
-                new ReceiveDeliveryCommand(request.Id, request.Number, request.CreatedAt, lines, ReceivedBy: UserId(principal)),
+                new ReceiveDeliveryCommand(request.Id, request.Number, request.CreatedAt, lines, request.Supplier, UserId(principal)),
                 cancellationToken);
             if (result.Error is not null || result.Value is null)
             {
@@ -160,7 +160,7 @@ public static class EndpointExtensions
                 ? Results.Created($"/api/deliveries/{result.Value.Delivery.Id}", result.Value.Delivery)
                 : Results.Ok(result.Value.Delivery);
         })
-        .Docs("Поставки", "Принять поставку вручную", "Вход: id, номер и строки с количеством и сроком. Повтор того же id отдаёт 200 и не создаёт вторую поставку. Новый id — 201.")
+        .Docs("Поставки", "Принять поставку вручную", "Вход: id, номер, поставщик и строки с количеством и годен до. Повтор того же id отдаёт 200 и не создаёт вторую поставку. Новый id — 201.")
         .Created<DeliveryView>()
         .Ok<DeliveryView>()
         .Bad();
@@ -185,7 +185,7 @@ public static class EndpointExtensions
             .Ok<IReadOnlyList<BatchView>>();
         group.MapGet("/stop-list", async (StockReadModel stock, CancellationToken cancellationToken) =>
             Results.Ok(await stock.StopListAsync(cancellationToken)))
-            .Docs("Склад", "Плитки смены", "Все блюда с рецептом. isStopped — только шеф или ноль порций. isCandidate склад не закрывает зал. Без лимита portionsPossible большое, hasLimit false.")
+            .Docs("Склад", "Плитки смены", "Все блюда с рецептом. isStopped — шеф, ноль заготовки или склад не тянет на порцию. reason и stopNote — почему, stopSource Chef/Prep/Stock. isCandidate — склада на 1–5 порций, зал ещё открыт.")
             .Ok<IReadOnlyList<ShiftTile>>();
         group.MapGet("/hot-offers", async (StockReadModel stock, CancellationToken cancellationToken) =>
             Results.Ok(await stock.HotOffersAsync(cancellationToken)))
@@ -197,7 +197,7 @@ public static class EndpointExtensions
             .Ok<IReadOnlyList<ShiftTile>>();
         group.MapGet("/dashboard", async (StockReadModel stock, CancellationToken cancellationToken) =>
             Results.Ok(await stock.DashboardAsync(cancellationToken)))
-            .Docs("Склад", "Сводка менеджера", "stoppedCount — подтверждённый стоп, не техкарта. Рядом партии на сутки, автосписание срока за сегодня, заказы и короткий прогноз склада.")
+            .Docs("Склад", "Сводка менеджера", "stoppedCount — шеф, ноль заготовки и автостоп склада. Рядом партии на сутки, автосписание срока за сегодня, заказы и короткий прогноз склада.")
             .Ok<DashboardView>()
             .RequireAuthorization("Manager");
     }
@@ -269,7 +269,7 @@ public static class EndpointExtensions
             var result = await shift.StopAsync(dishId, request.Reason, request.Note, UserId(principal), principal.Identity?.Name ?? "шеф", cancellationToken);
             return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
         })
-        .Docs("Смена", "Поставить стоп", "Вход: причина OutOfProduct, Waste, Quality, WontMakeIt или Equipment и заметка. Порции становятся 0, приоритет снимается, зал больше не берёт блюдо.")
+        .Docs("Смена", "Поставить стоп", "Вход: причина OutOfProduct, Waste, Quality, WontMakeIt или Equipment и заметка для зала. Порции становятся 0, приоритет снимается. Склад без сырья ставит стоп сам, без этой ручки.")
         .Ok<ShiftTile>()
         .Bad();
         group.MapPost("/dishes/{dishId:guid}/resume", async (Guid dishId, ShiftService shift, ClaimsPrincipal principal, CancellationToken cancellationToken) =>
@@ -414,6 +414,46 @@ public static class EndpointExtensions
         .Docs("Аналитика", "QR заявки поставщику", "Вход: необязательный список productIds. Выход: номер и строка QR. Партии не создаёт.")
         .Ok<PurchaseDraft>()
         .Bad();
+        group.MapPost("/purchase-lines", async (ForecastPurchaseRequest request, PurchaseService purchases, ClaimsPrincipal principal, CancellationToken cancellationToken) =>
+        {
+            var result = await purchases.AddForecastAsync(request.ProductIds, UserId(principal), cancellationToken);
+            return result.Error is null ? Results.Ok(new ForecastPurchaseResponse(result.Value)) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Аналитика", "Прогноз в заказ поставщику", "Кладёт дефицит недели в список заказа. Холодильник не меняется.")
+        .Ok<ForecastPurchaseResponse>()
+        .Bad();
+    }
+
+    /// <summary>
+    /// Заказ поставщику. Читает любая роль заведения. Пишут шеф и менеджер. Склад не трогает.
+    /// </summary>
+    public static void MapPurchaseEndpoints(this WebApplication app)
+    {
+        var group = app.MapGroup("/api/purchase-lines").RequireAuthorization("Kitchen");
+        group.MapGet("/", async (bool? open, PurchaseService purchases, CancellationToken cancellationToken) =>
+            Results.Ok(await purchases.ListAsync(open ?? true, cancellationToken)))
+            .Docs("Поставки", "Заказ поставщику", "open=true (по умолчанию) — ещё не принятые строки. Склад не меняется.")
+            .Ok<IReadOnlyList<PurchaseLineView>>();
+        group.MapPost("/", async (PurchaseLineRequest request, PurchaseService purchases, ClaimsPrincipal principal, CancellationToken cancellationToken) =>
+        {
+            var role = principal.FindFirstValue(ClaimTypes.Role);
+            var source = role == nameof(UserRole.Kitchen) ? PurchaseSource.Chef : PurchaseSource.Manager;
+            var result = await purchases.AddAsync(
+                new AddPurchaseLineCommand(request.ProductId, request.Quantity, request.Note, source, UserId(principal)),
+                cancellationToken);
+            return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Поставки", "Добавить в заказ поставщику", "Вход: productId из каталога, количество, заметка. Холодильник не растёт.")
+        .Ok<PurchaseLineView>()
+        .Bad();
+        group.MapDelete("/{id:guid}", async (Guid id, PurchaseService purchases, CancellationToken cancellationToken) =>
+        {
+            var result = await purchases.CancelAsync(id, cancellationToken);
+            return result.Error is null ? Results.NoContent() : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Поставки", "Убрать строку заказа", "Только пока не приняли. 204.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Bad();
     }
 
     /// <summary>
@@ -502,11 +542,17 @@ public sealed record DishRequest(string Name, IReadOnlyList<DishIngredientReques
 /// <summary>Строка ручной поставки. Срок — либо expiresAt, либо shelfLifeHours.</summary>
 public sealed record DeliveryItemRequest(Guid ProductId, string Name, string Unit, decimal Quantity, DateTime? ExpiresAt, double? ShelfLifeHours);
 /// <summary>Тело приёмки. Id клиент задаёт сам, повтор того же id идемпотентен.</summary>
-public sealed record DeliveryRequest(Guid Id, string Number, DateTime? CreatedAt, IReadOnlyList<DeliveryItemRequest> Items);
+public sealed record DeliveryRequest(Guid Id, string Number, DateTime? CreatedAt, IReadOnlyList<DeliveryItemRequest> Items, string? Supplier = null);
 /// <summary>Сырая строка QR поставки.</summary>
 public sealed record QrScanRequest(string Payload);
 /// <summary>Какие продукты положить в QR закупки. Пусто — берёт дефицит сам.</summary>
 public sealed record PurchaseRequest(IReadOnlyList<Guid>? ProductIds);
+/// <summary>Прогноз в список заказа. Пустой список — все позиции с дефицитом.</summary>
+public sealed record ForecastPurchaseRequest(IReadOnlyList<Guid>? ProductIds);
+/// <summary>Сколько строк прогноза легло в заказ.</summary>
+public sealed record ForecastPurchaseResponse(int Count);
+/// <summary>Строка заказа поставщику. Продукт уже должен быть в каталоге.</summary>
+public sealed record PurchaseLineRequest(Guid ProductId, decimal Quantity, string? Note);
 /// <summary>Старая отметка позиции заказа. Status: Queued, Cooking, Ready. Заметка до 300 символов.</summary>
 public sealed record KitchenDishMark(string Status, string? Note);
 /// <summary>Вскрытие партии. WriteOffQuantity новый экран не шлёт: брак идёт актом.</summary>

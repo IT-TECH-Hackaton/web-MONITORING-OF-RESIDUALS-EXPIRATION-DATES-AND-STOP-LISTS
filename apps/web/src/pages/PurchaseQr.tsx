@@ -1,29 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import QRCode from "qrcode";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "../session";
 
-export function PurchaseButton({ productIds, label = "В заявку" }: { productIds?: string[]; label?: string }) {
+export function PurchaseButton({ productIds, label = "В заказ поставщику" }: { productIds?: string[]; label?: string }) {
   const { client } = useSession();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [payload, setPayload] = useState<string | null>(null);
-  const [number, setNumber] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  useEffect(() => {
-    if (!payload || !canvasRef.current) return;
-    void QRCode.toCanvas(canvasRef.current, payload, { width: 220, margin: 1 });
-  }, [payload]);
-
-  async function requestDraft() {
+  async function addToOrder() {
     setPending(true);
     setError(null);
+    setOk(null);
     try {
-      const draft = await client.purchaseRequest(productIds);
-      setPayload(draft.payload);
-      setNumber(draft.number);
+      const result = await client.addForecastToOrder(productIds);
+      setOk(`В заказ: ${result.count} позиц.`);
+      await queryClient.invalidateQueries({ queryKey: ["purchase-lines"] });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Заявку не удалось собрать");
+      setError(caught instanceof Error ? caught.message : "В заказ не попало");
     } finally {
       setPending(false);
     }
@@ -31,20 +26,11 @@ export function PurchaseButton({ productIds, label = "В заявку" }: { prod
 
   return (
     <>
-      <button className="btn-ghost" type="button" disabled={pending} onClick={() => void requestDraft()}>
-        {pending ? "Собираем…" : label}
+      <button className="btn-ghost" type="button" disabled={pending} onClick={() => void addToOrder()}>
+        {pending ? "Кладём…" : label}
       </button>
       {error ? <p className="error-text">{error}</p> : null}
-      {payload ? (
-        <div className="modal-back" onClick={() => setPayload(null)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <strong>Заявка {number}</strong>
-            <p className="reason">Склад не меняется. Это код для поставщика. Партии появятся после приёмки с живым сертификатом.</p>
-            <canvas ref={canvasRef} />
-            <button className="btn" type="button" onClick={() => setPayload(null)}>Закрыть</button>
-          </div>
-        </div>
-      ) : null}
+      {ok ? <p className="hint">{ok}</p> : null}
     </>
   );
 }

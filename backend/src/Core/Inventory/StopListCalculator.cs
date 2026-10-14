@@ -7,7 +7,7 @@ public sealed record DishRecipe(Guid DishId, string DishName, IReadOnlyList<Reci
 public sealed record ProductAvailability(decimal Quantity, DateTime? NearestExpiry);
 
 /// <summary>
-/// Кандидат по техкарте. IsStopped здесь значит «склада не хватает на порцию», зал от этого не серый.
+/// Расчёт техкарты. IsStopped — склада не хватает на одну порцию. Это автостоп зала.
 /// </summary>
 public sealed record StopListEntry(
     Guid DishId,
@@ -18,8 +18,9 @@ public sealed record StopListEntry(
 
 /// <summary>
 /// Плитка смены, которую видят зал и шеф.
-/// IsStopped — шеф подтвердил 86 или порций заготовки ноль. IsCandidate — нехватка по рецепту, зал ещё открыт.
-/// IsLow — лимит задан и порций от 1 до 5. HasLimit false — шеф лимит не ставил, PortionsPossible тогда большое число.
+/// IsStopped — шеф, ноль заготовки или склад не тянет на порцию. IsCandidate — склада хватит на 1–5 порций, зал ещё открыт.
+/// IsLow — лимит задан и порций заготовки от 1 до 5. HasLimit false — шеф лимит не ставил, PortionsPossible тогда большое число.
+/// StopSource: Chef, Prep или Stock. StopNote — свободный текст шефа, его видит зал.
 /// </summary>
 public sealed record ShiftTile(
     Guid DishId,
@@ -32,14 +33,16 @@ public sealed record ShiftTile(
     string? Reason,
     string? CandidateReason,
     string? StopReason,
-    bool HasLimit);
+    bool HasLimit,
+    string? StopNote,
+    Monitoring.Core.StopSource? StopSource);
 
 /// <summary>Считает, сколько порций выходит из доступных партий. Просроченное и нулевое в остаток не входит.</summary>
 public static class StopListCalculator
 {
     /// <summary>
     /// Вход: техкарты и остаток по продуктам. Выход: по блюду число порций и текст нехватки.
-    /// Блюдо без строк рецепта пропускает. Это не стоп зала.
+    /// Блюдо без строк рецепта пропускает. Нехватка на порцию — автостоп.
     /// </summary>
     public static IReadOnlyList<StopListEntry> Calculate(
         IReadOnlyList<DishRecipe> dishes,

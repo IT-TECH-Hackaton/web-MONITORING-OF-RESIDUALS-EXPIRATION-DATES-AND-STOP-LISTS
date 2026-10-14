@@ -1,4 +1,4 @@
-import type { Freshness, Unit } from "./types";
+import type { Freshness, StopEntry, StopReason, StopSource, Unit } from "./types";
 
 export function newId(): string {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -35,4 +35,29 @@ export function freshnessLabel(freshness: Freshness): string {
   if (freshness === "Expiring") return "Скоро срок";
   if (freshness === "Expired") return "Просрочено";
   return "Нет остатка";
+}
+
+export function stopSourceLabel(source: StopSource | null | undefined): string {
+  if (source === "Stock") return "Система: нет сырья";
+  if (source === "Prep") return "Нет заготовки";
+  if (source === "Chef") return "Шеф закрыл";
+  return "Стоп";
+}
+
+export function stopReasonLabel(reason: StopReason | null | undefined): string | null {
+  if (reason === "OutOfProduct") return "Закончился продукт";
+  if (reason === "Waste") return "Брак";
+  if (reason === "Quality") return "Качество";
+  if (reason === "WontMakeIt") return "Не успеем";
+  if (reason === "Equipment") return "Техника";
+  return null;
+}
+
+export function stopWhy(entry: StopEntry) {
+  const source = stopSourceLabel(entry.stopSource);
+  const category = entry.stopSource === "Chef" ? stopReasonLabel(entry.stopReason) : null;
+  const detail = entry.stopSource === "Stock"
+    ? (entry.reason ?? "Не хватает ингредиентов на порцию")
+    : (entry.stopNote ?? entry.reason ?? "Блюдо закрыто");
+  return { source, category, detail };
 }

@@ -92,6 +92,21 @@ export type DeliveryLineInput = {
   shelfLifeHours?: number | null;
 };
 
+export type PurchaseSource = "Chef" | "Manager" | "Forecast";
+
+export type PurchaseLine = {
+  id: string;
+  productId: string;
+  productName: string;
+  unit: Unit;
+  quantity: number;
+  note: string | null;
+  source: PurchaseSource;
+  requestedByLogin: string;
+  createdAt: string;
+  fulfilledAt: string | null;
+};
+
 export type StockItem = {
   productId: string;
   name: string;
@@ -146,6 +161,7 @@ export type Dish = {
 };
 
 export type StopReason = "OutOfProduct" | "Waste" | "Quality" | "WontMakeIt" | "Equipment";
+export type StopSource = "Chef" | "Prep" | "Stock";
 
 export type StopEntry = {
   dishId: string;
@@ -159,6 +175,8 @@ export type StopEntry = {
   candidateReason: string | null;
   stopReason: StopReason | null;
   hasLimit: boolean;
+  stopNote: string | null;
+  stopSource: StopSource | null;
 };
 
 export type ShiftHistoryEntry = {
@@ -181,6 +199,18 @@ export type ExpiryTotal = {
   productName: string;
   unit: Unit;
   quantity: number;
+};
+
+export type ExpiryWriteOffLine = {
+  batchId: string;
+  productId: string;
+  productName: string;
+  unit: Unit;
+  deliveryNumber: string;
+  quantity: number;
+  expiresAt: string;
+  writtenOffAt: string;
+  loss: number;
 };
 
 export type Forecast = {
@@ -235,6 +265,7 @@ export type Dashboard = {
   acceptedOrdersToday: number;
   forecasts: Forecast[];
   weeklyForecast: WeeklyForecastReport;
+  expired: ExpiryWriteOffLine[];
 };
 
 export type WriteOff = {

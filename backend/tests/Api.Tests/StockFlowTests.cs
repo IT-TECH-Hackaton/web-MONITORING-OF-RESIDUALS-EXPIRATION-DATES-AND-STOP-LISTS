@@ -101,6 +101,31 @@ public sealed class StockFlowTests(PostgresFixture postgres) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Warehouse_cannot_make_a_portion_auto_stops()
+    {
+        var productId = Guid.NewGuid();
+        var dishId = await SeedPortion(productId, 50, 180, _factory.Clock.UtcNow.AddDays(2));
+        var list = await _client.GetFromJsonAsync<List<StopEntry>>("/api/stop-list", Json);
+        var entry = list!.Single(item => item.DishId == dishId);
+        Assert.True(entry.IsStopped);
+        Assert.False(entry.IsCandidate);
+        Assert.Equal("Stock", entry.StopSource);
+        Assert.Contains("не хватает", entry.Reason ?? "");
+    }
+
+    [Fact]
+    public async Task Few_warehouse_portions_stay_candidates()
+    {
+        var productId = Guid.NewGuid();
+        var dishId = await SeedPortion(productId, 200, 100, _factory.Clock.UtcNow.AddDays(2));
+        var list = await _client.GetFromJsonAsync<List<StopEntry>>("/api/stop-list", Json);
+        var entry = list!.Single(item => item.DishId == dishId);
+        Assert.False(entry.IsStopped);
+        Assert.True(entry.IsCandidate);
+        Assert.Contains("2", entry.CandidateReason ?? "");
+    }
+
+    [Fact]
     public async Task Expiry_removes_the_batch_and_stops_the_dish()
     {
         var productId = Guid.NewGuid();
@@ -116,9 +141,10 @@ public sealed class StockFlowTests(PostgresFixture postgres) : IAsyncLifetime
 
         var after = await _client.GetFromJsonAsync<List<StopEntry>>("/api/stop-list", Json);
         var entry = after!.Single(item => item.DishId == dishId);
-        Assert.False(entry.IsStopped);
-        Assert.True(entry.IsCandidate);
-        Assert.Contains("не хватает", entry.CandidateReason ?? "");
+        Assert.True(entry.IsStopped);
+        Assert.False(entry.IsCandidate);
+        Assert.Equal("Stock", entry.StopSource);
+        Assert.Contains("не хватает", entry.Reason ?? "");
 
         var batches = await _client.GetFromJsonAsync<List<BatchItem>>($"/api/stock/{productId}/batches", Json);
         var expired = Assert.Single(batches!);
@@ -167,7 +193,7 @@ public sealed class StockFlowTests(PostgresFixture postgres) : IAsyncLifetime
 
     private sealed record LoginItem(string AccessToken);
     private sealed record StockItem(Guid ProductId, decimal Available);
-    private sealed record StopEntry(Guid DishId, bool IsStopped, bool IsCandidate, string? Reason, string? CandidateReason);
+    private sealed record StopEntry(Guid DishId, bool IsStopped, bool IsCandidate, string? Reason, string? CandidateReason, string? StopSource);
     private sealed record BatchItem(string Status, decimal QuantityRemaining);
     private sealed record DishItem(Guid Id);
 }

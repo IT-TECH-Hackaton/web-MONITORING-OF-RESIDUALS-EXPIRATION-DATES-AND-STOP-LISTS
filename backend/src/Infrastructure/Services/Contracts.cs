@@ -171,6 +171,17 @@ public sealed record DeficitView(
 /// <summary>Сколько продукта списано по сроку за день. ProductId нужен, чтобы одинаковые имена не склеивались в один ключ.</summary>
 public sealed record ExpiryTotalView(Guid ProductId, string ProductName, Unit Unit, decimal Quantity);
 
+public sealed record ExpiryWriteOffLineView(
+    Guid BatchId,
+    Guid ProductId,
+    string ProductName,
+    Unit Unit,
+    string DeliveryNumber,
+    decimal Quantity,
+    DateTime ExpiresAt,
+    DateTime WrittenOffAt,
+    decimal Loss);
+
 public sealed record ForecastView(string DishName, string ProductName, double HoursUntilStop);
 
 public sealed record WeeklyForecastItemView(
@@ -191,6 +202,20 @@ public sealed record WeeklyForecastReport(
 
 public sealed record PurchaseDraft(string Payload, string Number, int ItemCount);
 
+public sealed record PurchaseLineView(
+    Guid Id,
+    Guid ProductId,
+    string ProductName,
+    Unit Unit,
+    decimal Quantity,
+    string? Note,
+    PurchaseSource Source,
+    string RequestedByLogin,
+    DateTime CreatedAt,
+    DateTime? FulfilledAt);
+
+public sealed record AddPurchaseLineCommand(Guid ProductId, decimal Quantity, string? Note, PurchaseSource Source, Guid RequestedBy);
+
 public sealed record PurchaseQrLine(Guid ProductId, string Name, string Unit, decimal Quantity, double ShelfLifeHours);
 
 public sealed record DashboardView(
@@ -199,7 +224,8 @@ public sealed record DashboardView(
     IReadOnlyList<ExpiryTotalView> ExpiryWriteOffToday,
     int AcceptedOrdersToday,
     IReadOnlyList<ForecastView> Forecasts,
-    WeeklyForecastReport WeeklyForecast);
+    WeeklyForecastReport WeeklyForecast,
+    IReadOnlyList<ExpiryWriteOffLineView> Expired);
 
 /// <summary>Успех с телом или ошибка строкой. Оба поля сразу не заполняются.</summary>
 public sealed record ServiceResult<T>(T? Value, string? Error)

@@ -45,24 +45,28 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
     }
 
     /// <summary>
-    /// Все блюда с рецептом. Стоп берётся из смены, кандидат — из калькулятора техкарты.
-    /// Без лимита шефа порций много и блюдо не серое, даже если склада мало.
+    /// Все блюда с рецептом. Стоп: шеф, ноль заготовки или склад не тянет на порцию.
+    /// Кандидат — склада хватит на 1–5 порций, зал ещё открыт. Без лимита шефа число порций большое, пока склада хватает.
     /// </summary>
     public async Task<IReadOnlyList<ShiftTile>> StopListAsync(CancellationToken cancellationToken)
     {
         var recipes = await RecipesAsync(cancellationToken);
         var stock = await AvailabilityAsync(cancellationToken);
-        var candidates = StopListCalculator.Calculate(recipes, stock)
+        var calculated = StopListCalculator.Calculate(recipes, stock)
             .ToDictionary(entry => entry.DishId);
         var shift = await db.ShiftDishes.AsNoTracking().ToDictionaryAsync(row => row.DishId, cancellationToken);
         var tiles = new List<ShiftTile>();
         foreach (var recipe in recipes.Where(recipe => recipe.Lines.Count > 0))
         {
-            candidates.TryGetValue(recipe.DishId, out var candidate);
+            calculated.TryGetValue(recipe.DishId, out var stockState);
             shift.TryGetValue(recipe.DishId, out var state);
             var hasLimit = state?.PrepPortions is not null;
             var prep = state?.PrepPortions;
-            var stopped = (state?.IsStopped ?? false) || prep == 0;
+            var stockPortions = stockState is null || stockState.IsStopped ? 0 : stockState.PortionsPossible;
+            var chefStop = state?.IsStopped == true;
+            var prepOut = prep == 0;
+            var stockOut = stockPortions <= 0;
+            var stopped = chefStop || prepOut || stockOut;
             var portions = hasLimit ? prep!.Value : 999;
             if (stopped)
             {
@@ -70,29 +74,23 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             }
 
             var low = !stopped && hasLimit && prep is > 0 and <= 5;
-            var candidateHit = candidate?.IsStopped == true;
-            string? reason = null;
-            if (stopped)
-            {
-                reason = string.IsNullOrWhiteSpace(state?.StopNote) ? ReasonLabel(state?.StopReason) : state!.StopNote;
-            }
-            else if (low)
-            {
-                reason = "Мало заготовки";
-            }
+            var almost = !stopped && stockPortions is > 0 and <= 5;
+            var (reason, stopReason, stopNote, stopSource) = DescribeStop(state, stockState, chefStop, prepOut, stockOut, low);
 
             tiles.Add(new ShiftTile(
                 recipe.DishId,
                 recipe.DishName,
                 portions,
                 stopped,
-                candidateHit && !stopped,
+                almost,
                 low,
                 (state?.IsPriority ?? false) && !stopped,
                 reason,
-                candidateHit ? candidate!.Reason : null,
-                stopped ? state?.StopReason : null,
-                hasLimit));
+                almost ? $"Склада хватит на {stockPortions} порц." : stockOut ? stockState?.Reason : null,
+                stopReason,
+                hasLimit,
+                stopNote,
+                stopSource));
         }
 
         return tiles.OrderBy(tile => tile.DishName).ToList();
@@ -101,6 +99,42 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
     /// <summary>Только плитки, где шеф включил «предлагать» и блюдо не в стопе.</summary>
     public async Task<IReadOnlyList<ShiftTile>> PriorityAsync(CancellationToken cancellationToken) =>
         (await StopListAsync(cancellationToken)).Where(tile => tile.IsPriority).ToList();
+
+    private static (string? Reason, string? StopReason, string? StopNote, StopSource? Source) DescribeStop(
+        ShiftDish? state,
+        StopListEntry? stockState,
+        bool chefStop,
+        bool prepOut,
+        bool stockOut,
+        bool low)
+    {
+        if (chefStop)
+        {
+            var label = ReasonLabel(state?.StopReason);
+            var note = string.IsNullOrWhiteSpace(state?.StopNote) ? null : state!.StopNote;
+            var reason = note is null ? label : string.IsNullOrEmpty(label) ? note : $"{label} — {note}";
+            return (reason, state?.StopReason, note, StopSource.Chef);
+        }
+
+        if (prepOut)
+        {
+            var note = string.IsNullOrWhiteSpace(state?.StopNote) ? null : state!.StopNote;
+            return (note ?? "Нет порций на заготовке", nameof(StopReason.OutOfProduct), note, StopSource.Prep);
+        }
+
+        if (stockOut)
+        {
+            var reason = stockState?.Reason ?? "Не хватает ингредиентов на порцию";
+            return (reason, nameof(StopReason.OutOfProduct), null, StopSource.Stock);
+        }
+
+        if (low)
+        {
+            return ("Мало заготовки", null, null, null);
+        }
+
+        return (null, null, null, null);
+    }
 
     private static string? ReasonLabel(string? reason) => reason switch
     {
@@ -135,7 +169,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
     }
 
     /// <summary>
-    /// Сводка менеджера. Число стопов — подтверждённые шефом.
+    /// Сводка менеджера. Число стопов — шеф, ноль заготовки и автостоп склада.
     /// Рядом партии на сутки, автосписание срока за сегодня, заказы и короткий прогноз.
     /// </summary>
     public async Task<DashboardView> DashboardAsync(CancellationToken cancellationToken)
@@ -155,9 +189,13 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         var writeOffs = await db.StockMovements.AsNoTracking()
             .Include(movement => movement.Batch)
             .ThenInclude(batch => batch.Product)
-            .Where(movement => movement.Type == MovementType.ExpiryWriteOff && movement.CreatedAt >= dayStart)
+            .Include(movement => movement.Batch)
+            .ThenInclude(batch => batch.Delivery)
+            .Where(movement => movement.Type == MovementType.ExpiryWriteOff && movement.CreatedAt >= now.AddDays(-7))
+            .OrderByDescending(movement => movement.CreatedAt)
             .ToListAsync(cancellationToken);
         var expiryTotals = writeOffs
+            .Where(movement => movement.CreatedAt >= dayStart)
             .GroupBy(movement => movement.Batch.ProductId)
             .Select(group =>
             {
@@ -166,6 +204,16 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             })
             .OrderByDescending(row => row.Quantity)
             .ToList();
+        var expired = writeOffs.Select(movement => new ExpiryWriteOffLineView(
+            movement.BatchId,
+            movement.Batch.ProductId,
+            movement.Batch.Product.Name,
+            movement.Batch.Product.Unit,
+            movement.Batch.Delivery.Number,
+            movement.Quantity,
+            movement.Batch.ExpiresAt,
+            movement.CreatedAt,
+            decimal.Round(movement.Quantity * movement.Batch.UnitCost, 2))).ToList();
         var acceptedToday = await db.Orders.CountAsync(
             order => order.Status == OrderStatus.Accepted && order.CreatedAt >= dayStart,
             cancellationToken);
@@ -176,7 +224,8 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             expiryTotals,
             acceptedToday,
             await ForecastsAsync(stop, cancellationToken),
-            await WeeklyForecastAsync(cancellationToken));
+            await WeeklyForecastAsync(cancellationToken),
+            expired);
     }
 
     /// <summary>Прогноз на следующую неделю по темпу заказов с понедельника.</summary>

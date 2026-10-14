@@ -60,7 +60,8 @@ export default function OrderScreen() {
           <View key={line.dishId} style={stopped || over ? styles.cardStopped : styles.card}>
             <Text style={styles.name}>{line.dishName}</Text>
             {stopped ? <Text style={styles.error}>{entry?.reason}</Text> : null}
-            {!stopped && over ? <Text style={styles.muted}>Хватит на {entry?.portionsPossible} порц. Уменьшите заказ.</Text> : null}
+            {!stopped && over ? <Text style={styles.muted}>Стол хочет {line.portions}, на заготовке {entry?.portionsPossible}. Лишнее не отправится.</Text> : null}
+            {entry?.isLow && !stopped && !over ? <Text style={styles.muted}>Мало: осталась {entry.portionsPossible} порц.</Text> : null}
             <View style={styles.row}>
               <Pressable style={styles.ghost} onPress={() => cart.change(line.dishId, line.portions - 1)}><Text style={styles.ghostText}>−</Text></Pressable>
               <Text style={styles.name}>{line.portions}</Text>

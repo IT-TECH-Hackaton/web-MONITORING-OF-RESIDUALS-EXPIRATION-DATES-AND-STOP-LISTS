@@ -82,6 +82,22 @@ public sealed class Batch
     public List<StockMovement> Movements { get; set; } = [];
 }
 
+/// <summary>Строка заказа поставщику. Пока не приняли — холодильник не меняется.</summary>
+public sealed class PurchaseLine
+{
+    public Guid Id { get; set; }
+    public Guid ProductId { get; set; }
+    public decimal Quantity { get; set; }
+    public string? Note { get; set; }
+    public PurchaseSource Source { get; set; }
+    public Guid RequestedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? FulfilledAt { get; set; }
+    public Guid? FulfilledByDeliveryId { get; set; }
+    public Product Product { get; set; } = null!;
+    public UserAccount RequestedByUser { get; set; } = null!;
+}
+
 /// <summary>Заказ зала. Отказ тоже сохраняется, чтобы видеть дефицит. TableNumber обязателен у официанта.</summary>
 public sealed class CustomerOrder
 {

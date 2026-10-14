@@ -100,14 +100,17 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
             }).ToList(),
         };
         var shiftRows = await db.ShiftDishes.Where(row => dishIds.Contains(row.DishId)).ToListAsync(cancellationToken);
+        var tiles = (await readModel.StopListAsync(cancellationToken)).ToDictionary(tile => tile.DishId);
         var blocks = new List<string>();
         foreach (var line in portions)
         {
             var state = shiftRows.FirstOrDefault(row => row.DishId == line.DishId);
             var name = dishes.Single(candidate => candidate.Id == line.DishId).Name;
-            if (state?.IsStopped == true || state?.PrepPortions == 0)
+            tiles.TryGetValue(line.DishId, out var tile);
+            if (tile?.IsStopped == true)
             {
-                blocks.Add($"{name}: стоп");
+                var why = string.IsNullOrWhiteSpace(tile.Reason) ? null : tile.Reason;
+                blocks.Add(why is null ? $"{name}: стоп" : $"{name}: стоп — {why}");
             }
             else if (state?.PrepPortions is int prep && line.Portions > prep)
             {

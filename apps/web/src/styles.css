@@ -138,6 +138,7 @@ html.dark .theme-toggle .theme-icon-sun { display: block; }
 .page-title p { margin: 6px 0 0; color: var(--ink-soft); max-width: 62ch; font-size: 14px; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.stats-five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .stat, .panel {
   background: var(--card);
   border: 1px solid var(--line);
@@ -231,7 +232,10 @@ input, select {
   color: var(--ink);
   width: 100%;
 }
-.line { display: grid; grid-template-columns: 1.5fr 90px 110px 130px; gap: 8px; align-items: end; }
+.line { display: grid; grid-template-columns: minmax(0, 1.6fr) 110px 150px 40px; gap: 8px; align-items: end; }
+.line-remove { min-height: 38px; padding: 0; font-size: 20px; line-height: 1; }
+.supplier-sheet-meta { margin: 0 0 12px; font-size: 14px; color: var(--ink-soft); }
+.supplier-sheet table { margin: 12px 0; }
 .empty, .hint { color: var(--ink-soft); font-size: 14px; }
 .error-text { color: var(--rose); font-weight: 650; }
 .reason { color: var(--ink-soft); font-size: 13px; line-height: 1.45; margin: 4px 0; }
@@ -338,19 +342,28 @@ html.dark .pill-priority { background: #3a221e; }
 .chip-label { margin: 0 0 6px; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-soft); }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
+  border: 0;
   border-radius: 999px;
   padding: 8px 12px;
+  font: inherit;
   font-size: 13px;
   font-weight: 650;
   min-height: 40px;
   display: inline-flex;
   align-items: center;
+  color: inherit;
 }
+button.chip { cursor: pointer; }
 .chip-stop {
   background: #ecece8;
   color: var(--ink-soft);
 }
 html.dark .chip-stop { background: #2a2a28; }
+.chip-low {
+  background: #f6e7c8;
+  color: #7a4a12;
+}
+html.dark .chip-low { background: #3a2e1c; color: #f0c27a; }
 .chip-priority {
   border: 1px solid var(--accent);
   background: var(--nav-active);
@@ -414,6 +427,7 @@ html.dark .chip-stop { background: #2a2a28; }
 }
 .suggest-item strong { display: block; }
 .suggest-item.is-priority { box-shadow: inset 3px 0 0 var(--accent); background: var(--nav-active); }
+.suggest-item.is-low { box-shadow: inset 3px 0 0 var(--amber); }
 .suggest-item.is-stop {
   background: #ecece8;
   color: var(--ink-soft);
@@ -557,6 +571,37 @@ html.dark .suggest-item.is-stop { background: #2a2a28; }
 .voice-chip.is-bad { border-color: var(--rose); }
 .voice-chip .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .voice-chip .btn, .voice-chip .btn-ghost { min-height: 48px; }
+.shift-note {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: inherit;
+  margin-bottom: 8px;
+}
+.floor-stop-sheet { text-align: left; }
+.stop-why-category {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.stop-why-detail {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.stop-why-link {
+  display: block;
+  text-align: left;
+  color: var(--rose, #b42318);
+  min-height: 32px;
+  padding: 4px 0;
+}
 .shift-reasons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .shift-reasons button,
 .shift-sheet > .btn,
@@ -788,6 +833,7 @@ summary.rep-fold-head::-webkit-details-marker { display: none; }
 .rep-tip em span { display: block; color: var(--ink-soft); font-size: 12px; }
 @media (max-width: 1100px) {
   .rep-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stats-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 800px) {
   .rep-head { flex-direction: column; align-items: stretch; }
@@ -828,6 +874,9 @@ summary.rep-fold-head::-webkit-details-marker { display: none; }
   .stat { background: #fff !important; color: #111 !important; }
   table { min-width: 0 !important; width: 100% !important; break-inside: auto; }
   th, td, h1, h2, p, strong, span { color: #111 !important; }
+  .is-supplier-print > :not(.supplier-sheet) { display: none !important; }
+  .supplier-sheet { border: none !important; box-shadow: none !important; padding: 0 !important; }
+  .supplier-sheet h2 { font-size: 22px !important; }
   @page { margin: 12mm; }
 }
 @media (max-width: 420px) {

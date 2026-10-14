@@ -107,6 +107,7 @@ app.MapGet("/health", () => Results.Ok(new HealthResponse("ok")))
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapDeliveryEndpoints();
+app.MapPurchaseEndpoints();
 app.MapStockEndpoints();
 app.MapOrderEndpoints();
 app.MapKitchenEndpoints();

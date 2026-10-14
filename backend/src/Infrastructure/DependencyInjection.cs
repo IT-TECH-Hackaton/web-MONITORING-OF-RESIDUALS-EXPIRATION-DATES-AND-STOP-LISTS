@@ -27,6 +27,7 @@ public static class DependencyInjection
         services.AddSingleton<ExpiryWatchState>();
         services.AddScoped<StockReadModel>();
         services.AddScoped<StockBroadcaster>();
+        services.AddScoped<PurchaseService>();
         services.AddScoped<DeliveryService>();
         services.AddScoped<QrIntakeService>();
         services.AddScoped<OrderService>();
@@ -61,6 +62,7 @@ public static class DependencyInjection
         }
 
         await scope.ServiceProvider.GetRequiredService<DbSeeder>().SeedAsync(cancellationToken);
+        await scope.ServiceProvider.GetRequiredService<ExpiryProcessor>().RunOnceAsync(cancellationToken);
     }
 
     private static void TryAddSingletonClock(this IServiceCollection services)

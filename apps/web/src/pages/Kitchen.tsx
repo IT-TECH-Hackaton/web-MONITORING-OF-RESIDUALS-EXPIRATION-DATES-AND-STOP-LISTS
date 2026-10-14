@@ -1,4 +1,4 @@
-import { ApiError, formatHours, formatQty, type Product, type ShiftHistoryEntry, type StopEntry, type StopReason, type WriteOffReason } from "@repo/contracts";
+import { ApiError, formatHours, formatQty, stopWhy, type Product, type PurchaseSource, type ShiftHistoryEntry, type StopEntry, type StopReason, type WriteOffReason } from "@repo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parsePortionPhrase, type PortionProposal } from "../portionVoice";
@@ -56,12 +56,92 @@ function messageOf(error: unknown) {
   return error instanceof Error ? error.message : "Не получилось сохранить смену";
 }
 
+function purchaseWho(source: PurchaseSource) {
+  if (source === "Chef") return "кухня";
+  if (source === "Forecast") return "прогноз";
+  return "менеджер";
+}
+
+function NeedOrderPanel({
+  products,
+  lines,
+  loading,
+  onAdd,
+  onCancel,
+  onError,
+}: {
+  products: Product[];
+  lines: { id: string; productName: string; unit: Product["unit"]; quantity: number; note: string | null; source: PurchaseSource; requestedByLogin: string }[];
+  loading: boolean;
+  onAdd: (productId: string, quantity: number, note: string | null) => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [productId, setProductId] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [note, setNote] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function submit() {
+    setPending(true);
+    try {
+      await onAdd(productId, Number(quantity), note.trim() || null);
+      setProductId("");
+      setQuantity("");
+      setNote("");
+    } catch (error) {
+      onError(messageOf(error));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Panel title="Нужно заказать">
+      <p className="reason">Строка уйдёт менеджеру в заказ поставщику. Холодильник не меняется, пока машину не примут.</p>
+      {loading ? <p>Загрузка списка…</p> : null}
+      {lines.length === 0 && !loading ? <Empty>Пока ничего не просили.</Empty> : (
+        <div className="stack">
+          {lines.map((line) => (
+            <div key={line.id} className="hot-row">
+              <span>
+                <strong>{line.productName}</strong>
+                <p className="reason">
+                  {formatQty(line.quantity, line.unit)} · {purchaseWho(line.source)} · {line.requestedByLogin}
+                  {line.note ? ` · ${line.note}` : ""}
+                </p>
+              </span>
+              <button type="button" className="btn-ghost" onClick={() => void onCancel(line.id)}>Убрать</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <form className="form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+        <label>
+          Продукт
+          <select value={productId} onChange={(event) => setProductId(event.target.value)} required>
+            <option value="">Из холодильника / каталога</option>
+            {products.map((product) => (
+              <option key={product.id} value={product.id}>{product.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>Сколько<input type="number" min="0.001" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required /></label>
+        <label>Заметка<input value={note} onChange={(event) => setNote(event.target.value)} placeholder="банкет, замена, кончилось…" /></label>
+        <button className="btn" disabled={pending}>{pending ? "Пишем…" : "В заказ поставщику"}</button>
+      </form>
+    </Panel>
+  );
+}
+
 export function KitchenPage() {
   const { client } = useSession();
   const queryClient = useQueryClient();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const offers = useQuery({ queryKey: ["hot-offers"], queryFn: () => client.hotOffers() });
   const kitchen = useQuery({ queryKey: ["kitchen"], queryFn: () => client.kitchen() });
+  const products = useQuery({ queryKey: ["products"], queryFn: () => client.products() });
+  const purchase = useQuery({ queryKey: ["purchase-lines"], queryFn: () => client.purchaseLines(true) });
   const dishes = stop.data ?? [];
   const [openId, setOpenId] = useState<string | null>(null);
   const [wasteOpen, setWasteOpen] = useState(false);
@@ -76,6 +156,7 @@ export function KitchenPage() {
     await queryClient.invalidateQueries({ queryKey: ["priority"] });
     await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     await queryClient.invalidateQueries({ queryKey: ["kitchen"] });
+    await queryClient.invalidateQueries({ queryKey: ["purchase-lines"] });
   }
 
   async function run(action: () => Promise<unknown>, ok: string) {
@@ -119,7 +200,7 @@ export function KitchenPage() {
       <div className="page-title">
         <div>
           <h1>Смена</h1>
-          <p>Стоп и порции заготовки — рука шефа. Кандидат системы зал не закрывает. Заказ с зала сам минусует плитку.</p>
+          <p>Стоп зала: шеф, ноль заготовки или склад не тянет на порцию. Кандидат — сырья мало, блюдо ещё открыто. Заказ с зала сам минусует плитку.</p>
         </div>
         <button type="button" className="btn-ghost" onClick={() => setWasteOpen(true)}>Акт списания</button>
       </div>
@@ -183,7 +264,7 @@ export function KitchenPage() {
       <Panel title="Использовать первым">
         {(kitchen.data?.batches.length ?? 0) === 0 ? <Empty>Нет коротких и вскрытых партий.</Empty> : (
           <div className="stack">
-            {kitchen.data?.batches.map((batch) => (
+            {kitchen.data?.batches.slice(0, 4).map((batch) => (
               <button
                 key={batch.batchId}
                 type="button"
@@ -205,13 +286,29 @@ export function KitchenPage() {
           </div>
         )}
       </Panel>
+      <NeedOrderPanel
+        products={products.data ?? []}
+        lines={purchase.data ?? []}
+        loading={purchase.isLoading}
+        onAdd={async (productId, quantity, note) => {
+          await client.addPurchaseLine({ productId, quantity, note });
+          setHint("Добавили в заказ поставщику. Холодильник не менялся.");
+          await queryClient.invalidateQueries({ queryKey: ["purchase-lines"] });
+        }}
+        onCancel={async (id) => {
+          await client.cancelPurchaseLine(id);
+          await queryClient.invalidateQueries({ queryKey: ["purchase-lines"] });
+        }}
+        onError={(message) => setHint(message)}
+      />
       {open ? (
         <ShiftSheet
+          key={open.dishId}
           dish={open}
           dishes={dishes}
           onClose={() => setOpenId(null)}
           onPortions={(delta) => void run(() => client.shiftPortions(open.dishId, delta), `${open.dishName}: порции ${delta > 0 ? "+" : ""}${delta}`)}
-          onStop={(reason) => void run(() => client.shiftStop(open.dishId, reason, ""), `${open.dishName} в стопе`)}
+          onStop={(reason, note) => void run(() => client.shiftStop(open.dishId, reason, note), `${open.dishName} в стопе`)}
           onResume={() => void run(() => client.shiftResume(open.dishId), `${open.dishName}: стоп снят`)}
           onPriority={() => void run(() => client.shiftPriority(open.dishId, !open.isPriority), open.isPriority ? "Убрали из приоритета" : "В приоритете")}
         />
@@ -380,17 +477,20 @@ function ShiftSheet({
   dishes: StopEntry[];
   onClose: () => void;
   onPortions: (delta: number) => void;
-  onStop: (reason: StopReason) => void;
+  onStop: (reason: StopReason, note: string) => void;
   onResume: () => void;
   onPriority: () => void;
 }) {
   const { client } = useSession();
+  const [note, setNote] = useState("");
   const history = useQuery({
     queryKey: ["shift-history", dish.dishId],
     queryFn: () => client.shiftHistory(dish.dishId),
   });
   const events = (history.data ?? []).slice(0, 8);
-  const canResume = dish.isStopped && dish.hasLimit && dish.portionsPossible > 0;
+  const why = dish.isStopped ? stopWhy(dish) : null;
+  const stockStop = dish.isStopped && dish.stopSource === "Stock";
+  const canResume = dish.isStopped && !stockStop && dish.hasLimit && dish.portionsPossible > 0;
   const qty = dish.isStopped ? "0" : dish.hasLimit ? String(dish.portionsPossible) : "∞";
   return (
     <div className="modal-back" onClick={onClose}>
@@ -402,8 +502,13 @@ function ShiftSheet({
             {dish.isStopped ? "Стоп — зал не берёт." : dish.hasLimit ? `${dish.portionsPossible} порц. на заготовке.` : "Лимит заготовки ещё не задан."}
             {dish.isPriority && !dish.isStopped ? " Приоритет для зала." : ""}
           </p>
+          {why ? (
+            <p className="reason">
+              {why.source}{why.category ? ` · ${why.category}` : ""}. {why.detail}
+            </p>
+          ) : null}
           {dish.isCandidate && !dish.isStopped ? (
-            <p className="reason">Кандидат системы: {dish.candidateReason}. Зал ещё открыт, пока не подтвердишь стоп.</p>
+            <p className="reason">Кандидат системы: {dish.candidateReason}. Зал ещё открыт, пока не поставишь стоп.</p>
           ) : null}
         </div>
         <div className="shift-stepper">
@@ -418,7 +523,8 @@ function ShiftSheet({
           <button type="button" className="btn-ghost" onClick={() => onPortions(-5)}>−5</button>
         </div>
         <p className="reason">+3 / +5 после доготовки противня. Это не приход на склад. 0 порций = стоп.</p>
-        <PortionVoice dish={dish} dishes={dishes} onConfirm={onPortions} />
+        {/* Голос на плитке. Замени false на true, когда нужен для демо. */}
+        {false ? <PortionVoice dish={dish} dishes={dishes} onConfirm={onPortions} /> : null}
         <button
           type="button"
           className={dish.isPriority ? "btn-ghost" : "btn"}
@@ -428,15 +534,29 @@ function ShiftSheet({
           {dish.isPriority ? "Убрать из приоритета" : "В приоритет — предлагать залу"}
         </button>
         {dish.isStopped ? (
-          <button type="button" className="btn" disabled={!canResume} onClick={onResume}>
-            {canResume ? "Снять стоп" : "Сначала + порций, потом снять стоп"}
-          </button>
+          <>
+            {stockStop ? (
+              <p className="reason">Стоп склада. + порций зал не откроет — блюдо вернётся само, когда сырья хватит на порцию.</p>
+            ) : (
+              <button type="button" className="btn" disabled={!canResume} onClick={onResume}>
+                {canResume ? "Снять стоп" : "Сначала + порций, потом снять стоп"}
+              </button>
+            )}
+          </>
         ) : (
           <div>
             <p className="chip-label">Поставить в стоп</p>
+            <textarea
+              className="shift-note"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Заметка для зала: почему закрыли"
+              maxLength={300}
+              rows={3}
+            />
             <div className="shift-reasons">
               {STOP_REASONS.map((reason) => (
-                <button key={reason.id} type="button" className="btn-ghost" onClick={() => onStop(reason.id)}>
+                <button key={reason.id} type="button" className="btn-ghost" onClick={() => onStop(reason.id, note.trim())}>
                   {reason.label}
                 </button>
               ))}

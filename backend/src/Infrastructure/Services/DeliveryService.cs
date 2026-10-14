@@ -6,7 +6,7 @@ using Monitoring.Infrastructure.Persistence;
 namespace Monitoring.Infrastructure.Services;
 
 /// <summary>Приёмка поставки в партии. Повтор того же id возвращает уже созданную, склад второй раз не растёт.</summary>
-public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcaster broadcaster)
+public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcaster broadcaster, PurchaseService purchases)
 {
     /// <summary>Вход: номер, строки с количеством и сроком. Выход: поставка и флаг, создана она сейчас или уже была.</summary>
     public async Task<ServiceResult<DeliveryReceipt>> ReceiveAsync(ReceiveDeliveryCommand command, CancellationToken cancellationToken)
@@ -121,6 +121,7 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
             return ServiceResult<DeliveryReceipt>.Ok(new DeliveryReceipt(stored, false));
         }
 
+        await purchases.FulfillForDeliveryAsync(command.Id, productIds, cancellationToken);
         await broadcaster.PublishAsync(new StockChange(productIds, [], [], null, null, null), cancellationToken);
         var created = await GetAsync(command.Id, cancellationToken);
         return ServiceResult<DeliveryReceipt>.Ok(new DeliveryReceipt(created!, true));

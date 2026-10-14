@@ -357,6 +357,67 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.ToTable("products", (string)null);
                 });
 
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.PurchaseLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("FulfilledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fulfilled_at");
+
+                    b.Property<Guid?>("FulfilledByDeliveryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("fulfilled_by_delivery_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("note");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)")
+                        .HasColumnName("quantity");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("source");
+
+                    b.HasKey("Id")
+                        .HasName("pk_purchase_lines");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("ix_purchase_lines_product_id");
+
+                    b.HasIndex("RequestedBy")
+                        .HasDatabaseName("ix_purchase_lines_requested_by");
+
+                    b.HasIndex("FulfilledAt", "CreatedAt")
+                        .HasDatabaseName("ix_purchase_lines_fulfilled_at_created_at");
+
+                    b.ToTable("purchase_lines", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_purchase_lines_quantity", "quantity > 0");
+                        });
+                });
+
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftDish", b =>
                 {
                     b.Property<Guid>("DishId")
@@ -630,6 +691,27 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.Navigation("Order");
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.PurchaseLine", b =>
+                {
+                    b.HasOne("Monitoring.Infrastructure.Persistence.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_lines_products_product_id");
+
+                    b.HasOne("Monitoring.Infrastructure.Persistence.UserAccount", "RequestedByUser")
+                        .WithMany()
+                        .HasForeignKey("RequestedBy")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_lines_users_requested_by");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("RequestedByUser");
                 });
 
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftDish", b =>

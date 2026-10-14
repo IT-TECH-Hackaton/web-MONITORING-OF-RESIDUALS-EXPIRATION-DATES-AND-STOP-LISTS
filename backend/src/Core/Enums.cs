@@ -58,7 +58,7 @@ public enum WriteOffReason
     StaffMeal,
 }
 
-/// <summary>Почему шеф закрыл блюдо. Нехватка по техкарте сюда не пишется — это кандидат.</summary>
+/// <summary>Почему блюдо в стопе: рука шефа, ноль заготовки или склад не тянет на порцию.</summary>
 public enum StopReason
 {
     OutOfProduct,
@@ -68,6 +68,14 @@ public enum StopReason
     Equipment,
 }
 
+/// <summary>Кто закрыл блюдо для зала. Stock считается сам по техкарте, Chef и Prep пишет смена.</summary>
+public enum StopSource
+{
+    Chef,
+    Prep,
+    Stock,
+}
+
 /// <summary>Свежесть партии для плитки склада: норма, скоро срок, просрочено, пусто.</summary>
 public enum Freshness
 {
@@ -75,4 +83,12 @@ public enum Freshness
     Expiring,
     Expired,
     Empty,
+}
+
+/// <summary>Кто положил строку в заказ поставщику. Склад от этого не растёт.</summary>
+public enum PurchaseSource
+{
+    Chef,
+    Manager,
+    Forecast,
 }

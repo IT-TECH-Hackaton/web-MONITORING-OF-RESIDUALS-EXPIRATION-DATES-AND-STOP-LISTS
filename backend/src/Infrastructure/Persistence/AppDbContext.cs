@@ -17,6 +17,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<ShiftDish> ShiftDishes => Set<ShiftDish>();
     public DbSet<ShiftHistory> ShiftHistory => Set<ShiftHistory>();
+    public DbSet<PurchaseLine> PurchaseLines => Set<PurchaseLine>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -138,6 +139,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(row => row.Text).HasMaxLength(300);
             entity.HasIndex(row => row.DishId);
             entity.HasOne(row => row.Dish).WithMany().HasForeignKey(row => row.DishId);
+        });
+
+        modelBuilder.Entity<PurchaseLine>(entity =>
+        {
+            entity.ToTable("purchase_lines", table =>
+                table.HasCheckConstraint("ck_purchase_lines_quantity", "quantity > 0"));
+            entity.Property(line => line.Quantity).HasPrecision(18, 3);
+            entity.Property(line => line.Note).HasMaxLength(300);
+            entity.Property(line => line.Source).HasConversion<string>().HasMaxLength(16);
+            entity.HasIndex(line => new { line.FulfilledAt, line.CreatedAt });
+            entity.HasOne(line => line.Product).WithMany().HasForeignKey(line => line.ProductId);
+            entity.HasOne(line => line.RequestedByUser).WithMany().HasForeignKey(line => line.RequestedBy);
         });
     }
 }

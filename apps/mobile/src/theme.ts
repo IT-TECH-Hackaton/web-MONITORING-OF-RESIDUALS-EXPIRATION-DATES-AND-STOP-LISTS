@@ -59,4 +59,18 @@ export const styles = StyleSheet.create({
   ghostText: { color: colors.text, fontSize: 22, fontWeight: "700" },
   input: { backgroundColor: colors.card, color: colors.text, borderRadius: 14, paddingHorizontal: 14, minHeight: 52, fontSize: 16, borderWidth: 1, borderColor: colors.line },
   error: { color: colors.danger, fontSize: 15, lineHeight: 22 },
+  modalBack: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    padding: 20,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
 });

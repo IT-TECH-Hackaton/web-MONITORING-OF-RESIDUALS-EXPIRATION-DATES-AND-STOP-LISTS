@@ -10,7 +10,7 @@ export function OrdersPage() {
       <div className="page-title">
         <div>
           <h1>Заказы</h1>
-          <p>Отклонённый заказ склад не меняет. В причине видно, какого продукта не хватило.</p>
+          <p>Журнал зала: стол, состав, принят или отказ. Отклонённый заказ склад не меняет.</p>
         </div>
       </div>
       <Panel title="Журнал">
@@ -19,13 +19,14 @@ export function OrdersPage() {
         {orders.data?.length === 0 ? <Empty>Заказов ещё не было.</Empty> : null}
         {orders.data && orders.data.length > 0 ? (
           <table>
-            <thead><tr><th>Время</th><th>Кто</th><th>Состав</th><th>Статус</th><th>Причина</th></tr></thead>
+            <thead><tr><th>Время</th><th>Стол</th><th>Кто</th><th>Состав</th><th>Статус</th><th>Причина</th></tr></thead>
             <tbody>
               {orders.data.map((order) => (
                 <tr key={order.id}>
                   <td>{formatWhen(order.createdAt)}</td>
+                  <td>{order.tableNumber ?? "—"}</td>
                   <td>{order.createdByLogin}</td>
-                  <td>{order.items.map((item) => `${item.dishName} × ${item.portions} (${item.kitchenStatus === "Ready" ? "готово" : item.kitchenStatus === "Cooking" ? "готовится" : "в очереди"})`).join(", ")}</td>
+                  <td>{order.items.map((item) => `${item.dishName} × ${item.portions}`).join(", ")}</td>
                   <td><span className={`pill pill-${order.status.toLowerCase()}`}>{order.status === "Accepted" ? "Принят" : "Отказ"}</span></td>
                   <td className="reason">{order.rejectionReason ?? "—"}</td>
                 </tr>

@@ -1,4 +1,4 @@
-import { ApiError, newId, type StopEntry } from "@repo/contracts";
+import { ApiError, newId, stopWhy, type StopEntry } from "@repo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
@@ -211,14 +211,34 @@ export function FloorShell() {
   );
 }
 
+function StopWhySheet({ entry, onClose }: { entry: StopEntry; onClose: () => void }) {
+  const why = stopWhy(entry);
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="shift-sheet floor-stop-sheet" role="dialog" aria-labelledby="stop-why-title" onClick={(event) => event.stopPropagation()}>
+        <div>
+          <p className="chip-label">Стоп-лист</p>
+          <h2 id="stop-why-title">{entry.dishName}</h2>
+          <p className="reason">{why.source}</p>
+        </div>
+        {why.category ? <p className="stop-why-category">{why.category}</p> : null}
+        <p className="stop-why-detail">{why.detail}</p>
+        <button type="button" className="btn" onClick={onClose}>Понятно</button>
+      </div>
+    </div>
+  );
+}
+
 export function FloorMenuPage() {
   const { client } = useSession();
   const cart = useCart();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const [query, setQuery] = useState("");
   const [hint, setHint] = useState<string | null>(null);
+  const [why, setWhy] = useState<StopEntry | null>(null);
   const dishes = stop.data ?? [];
   const stopped = dishes.filter((entry) => entry.isStopped);
+  const low = dishes.filter((entry) => isLow(entry));
   const priority = dishes.filter((entry) => entry.isPriority && !entry.isStopped);
   const hotKeys = useMemo(() => new Set(priority.map((item) => dishKey(item.dishName))), [priority]);
   const needle = dishKey(query);
@@ -236,10 +256,23 @@ export function FloorMenuPage() {
   }, [dishes, query, needle, hotKeys]);
   const canNote = Boolean(needle) && results.length === 0;
 
+  function inCart(dishId: string) {
+    const line = cart.lines.find((item) => item.kind === "dish" && item.dishId === dishId);
+    return line?.kind === "dish" ? line.portions : 0;
+  }
+
   function add(entry: StopEntry) {
     if (entry.isStopped) return;
+    const next = inCart(entry.dishId) + 1;
+    if (entry.hasLimit && next > entry.portionsPossible) {
+      setHint(`${entry.dishName}: на заготовке ${entry.portionsPossible} порц. На ${next} не хватит.`);
+      return;
+    }
     cart.add(entry.dishId, entry.dishName);
-    setHint(`${entry.dishName} в заказ`);
+    const left = entry.hasLimit ? entry.portionsPossible - next : null;
+    if (left === 0) setHint(`${entry.dishName} в заказ. Последняя порция — на 2 стол не возьмёт.`);
+    else if (left != null && isLow(entry)) setHint(`${entry.dishName} в заказ. Осталось ${left} порц.`);
+    else setHint(`${entry.dishName} в заказ`);
     setQuery("");
   }
 
@@ -254,12 +287,34 @@ export function FloorMenuPage() {
   return (
     <>
       <section className="chip-block" aria-label="Стоп-лист">
-        <p className="chip-label">Стоп</p>
+        <p className="chip-label">Стоп · нажми почему</p>
         <div className="chip-row">
+          {stopped.length === 0 ? <p className="reason">Пусто — всё можно брать.</p> : null}
           {stopped.map((entry) => (
-            <span key={entry.dishId} className="chip chip-stop" title={entry.reason ?? "стоп"}>
+            <button
+              key={entry.dishId}
+              type="button"
+              className="chip chip-stop"
+              onClick={() => setWhy(entry)}
+            >
               {entry.dishName}
-            </span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="chip-block" aria-label="Мало">
+        <p className="chip-label">Мало · сколько осталось</p>
+        <div className="chip-row">
+          {low.length === 0 ? <p className="reason">Нет блюд на исходе.</p> : null}
+          {low.map((entry) => (
+            <button
+              key={entry.dishId}
+              type="button"
+              className="chip chip-low"
+              onClick={() => add(entry)}
+            >
+              {entry.dishName} · {entry.portionsPossible}
+            </button>
           ))}
         </div>
       </section>
@@ -294,7 +349,8 @@ export function FloorMenuPage() {
           autoComplete="off"
         />
       </label>
-      <FloorListen onSave={(text) => { cart.addNote(text); setHint(`Заметка: ${text}`); }} />
+      {/* Микрофон зала. Замени false на true, когда нужен для демо. */}
+      {false ? <FloorListen onSave={(text) => { cart.addNote(text); setHint(`Заметка: ${text}`); }} /> : null}
       {canNote ? (
         <button type="button" className="btn-ghost note-add" onClick={addNote}>
           Заметка
@@ -312,13 +368,15 @@ export function FloorMenuPage() {
                 <li key={entry.dishId}>
                   <button
                     type="button"
-                    className={["suggest-item", featured ? "is-priority" : ""].filter(Boolean).join(" ")}
+                    className={["suggest-item", featured ? "is-priority" : "", isLow(entry) ? "is-low" : ""].filter(Boolean).join(" ")}
                     onClick={() => add(entry)}
                   >
                     <span>
                       <strong>{entry.dishName}</strong>
+                      {entry.hasLimit ? <span className="reason">{isLow(entry) ? `Мало · ${entry.portionsPossible} порц.` : `${entry.portionsPossible} порц.`}</span> : null}
                     </span>
                     {featured ? <span className="pill pill-priority">приоритет</span> : null}
+                    {isLow(entry) ? <span className="pill pill-low">{entry.portionsPossible}</span> : null}
                   </button>
                 </li>
               );
@@ -326,6 +384,7 @@ export function FloorMenuPage() {
           </ul>
         )
       ) : <p className="reason">Набери блюдо — выбери из списка. Если такого нет, это заметка к заказу.</p>}
+      {why ? <StopWhySheet entry={why} onClose={() => setWhy(null)} /> : null}
     </>
   );
 }
@@ -335,6 +394,7 @@ export function FloorOrderPage() {
   const cart = useCart();
   const queryClient = useQueryClient();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
+  const [why, setWhy] = useState<StopEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -409,9 +469,13 @@ export function FloorOrderPage() {
             <article key={line.dishId} className={stopped || over ? "floor-line floor-line-bad" : "floor-line"}>
               <div>
                 <strong>{line.dishName}</strong>
-                {stopped ? <p className="error-text">{entry?.reason}</p> : null}
-                {!stopped && over ? <p className="reason">Хватит на {entry?.portionsPossible} порц.</p> : null}
-                {entry && isLow(entry) && !stopped ? <p className="reason">Мало на заготовке.</p> : null}
+                {stopped ? (
+                  <button type="button" className="text-btn stop-why-link" onClick={() => entry && setWhy(entry)}>
+                    {entry?.reason ?? "Почему в стопе"}
+                  </button>
+                ) : null}
+                {!stopped && over ? <p className="reason">Стол хочет {line.portions}, на заготовке {entry?.portionsPossible}. Лишнее не отправится.</p> : null}
+                {entry && isLow(entry) && !stopped && !over ? <p className="reason">Мало: осталась {entry.portionsPossible} порц.</p> : null}
               </div>
               <div className="stepper">
                 <button type="button" onClick={() => cart.change(line.dishId, line.portions - 1)}>−</button>
@@ -439,6 +503,7 @@ export function FloorOrderPage() {
       >
         {pending ? "Отправляем…" : "Отправить на кухню"}
       </button>
+      {why ? <StopWhySheet entry={why} onClose={() => setWhy(null)} /> : null}
     </div>
   );
 }
