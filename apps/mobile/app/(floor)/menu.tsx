@@ -12,11 +12,14 @@ export default function MenuScreen() {
   const cart = useCart();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
   const [why, setWhy] = useState<StopEntry | null>(null);
+  const dishes = stop.data ?? [];
+  const shiftClosed = dishes.length > 0 && dishes.every((entry) => entry.isStopped && entry.reason === "Смена закрыта");
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
       <Text style={styles.title}>Меню</Text>
-      {stop.data?.map((entry) => (
+      {shiftClosed ? <Text style={styles.muted}>Смена закрыта. Заказы не принимаются.</Text> : null}
+      {dishes.map((entry) => (
         <Pressable
           key={entry.dishId}
           style={entry.isStopped ? styles.cardStopped : styles.card}

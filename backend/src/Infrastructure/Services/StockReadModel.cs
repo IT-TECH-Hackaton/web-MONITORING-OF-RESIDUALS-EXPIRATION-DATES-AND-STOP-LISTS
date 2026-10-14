@@ -45,8 +45,8 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
     }
 
     /// <summary>
-    /// Все блюда с рецептом. Стоп: шеф, ноль заготовки или склад не тянет на порцию.
-    /// Кандидат — склада хватит на 1–5 порций, зал ещё открыт. Без лимита шефа число порций большое, пока склада хватает.
+    /// Все блюда с рецептом. Закрытая смена — стоп «Смена закрыта».
+    /// Открытая: стоп от шефа, нуля заготовки или склада. Кандидат — склада хватит на 1–5 порций, зал ещё открыт.
     /// </summary>
     public async Task<IReadOnlyList<ShiftTile>> StopListAsync(CancellationToken cancellationToken)
     {
@@ -54,28 +54,31 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         var stock = await AvailabilityAsync(cancellationToken);
         var calculated = StopListCalculator.Calculate(recipes, stock)
             .ToDictionary(entry => entry.DishId);
+        var shiftOpen = await db.ServiceShifts.AsNoTracking().AnyAsync(row => row.ClosedAt == null, cancellationToken);
         var shift = await db.ShiftDishes.AsNoTracking().ToDictionaryAsync(row => row.DishId, cancellationToken);
         var tiles = new List<ShiftTile>();
         foreach (var recipe in recipes.Where(recipe => recipe.Lines.Count > 0))
         {
+            if (!shiftOpen)
+            {
+                tiles.Add(new ShiftTile(recipe.DishId, recipe.DishName, 0, true, false, false, false, "Смена закрыта", null, null, true, null, null));
+                continue;
+            }
+
             calculated.TryGetValue(recipe.DishId, out var stockState);
             shift.TryGetValue(recipe.DishId, out var state);
-            var hasLimit = state?.PrepPortions is not null;
             var prep = state?.PrepPortions;
             var stockPortions = stockState is null || stockState.IsStopped ? 0 : stockState.PortionsPossible;
             var chefStop = state?.IsStopped == true;
+            var prepMissing = prep is null;
             var prepOut = prep == 0;
             var stockOut = stockPortions <= 0;
-            var stopped = chefStop || prepOut || stockOut;
-            var portions = hasLimit ? prep!.Value : 999;
-            if (stopped)
-            {
-                portions = 0;
-            }
+            var stopped = chefStop || prepMissing || prepOut || stockOut;
+            var portions = stopped ? 0 : prep!.Value;
 
-            var low = !stopped && hasLimit && prep is > 0 and <= 5;
+            var low = !stopped && prep is > 0 and <= 5;
             var almost = !stopped && stockPortions is > 0 and <= 5;
-            var (reason, stopReason, stopNote, stopSource) = DescribeStop(state, stockState, chefStop, prepOut, stockOut, low);
+            var (reason, stopReason, stopNote, stopSource) = DescribeStop(state, stockState, chefStop, prepMissing, prepOut, stockOut, low);
 
             tiles.Add(new ShiftTile(
                 recipe.DishId,
@@ -88,7 +91,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
                 reason,
                 almost ? $"Склада хватит на {stockPortions} порц." : stockOut ? stockState?.Reason : null,
                 stopReason,
-                hasLimit,
+                true,
                 stopNote,
                 stopSource));
         }
@@ -104,6 +107,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         ShiftDish? state,
         StopListEntry? stockState,
         bool chefStop,
+        bool prepMissing,
         bool prepOut,
         bool stockOut,
         bool low)
@@ -114,6 +118,11 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             var note = string.IsNullOrWhiteSpace(state?.StopNote) ? null : state!.StopNote;
             var reason = note is null ? label : string.IsNullOrEmpty(label) ? note : $"{label} — {note}";
             return (reason, state?.StopReason, note, StopSource.Chef);
+        }
+
+        if (prepMissing)
+        {
+            return ("Заготовка не задана", nameof(StopReason.OutOfProduct), null, StopSource.Prep);
         }
 
         if (prepOut)

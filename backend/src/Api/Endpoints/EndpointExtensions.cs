@@ -260,6 +260,27 @@ public static class EndpointExtensions
     public static void MapShiftEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/shift").RequireAuthorization("Kitchen");
+        group.MapGet("/current", async (ShiftService shift, CancellationToken cancellationToken) =>
+            Results.Ok(await shift.CurrentAsync(cancellationToken)))
+            .Docs("Смена", "Текущая смена", "isOpen true, пока день не закрыт. Закрытая смена гасит зал, даже если вчерашние порции ещё лежат в базе.")
+            .Ok<ShiftCurrentView>();
+        group.MapPost("/open", async (OpenShiftBody request, ShiftService shift, ClaimsPrincipal principal, CancellationToken cancellationToken) =>
+        {
+            var dishes = request.Dishes.Select(row => new OpenShiftDish(row.DishId, row.Portions)).ToList();
+            var result = await shift.OpenAsync(dishes, UserId(principal), principal.Identity?.Name ?? "шеф", cancellationToken);
+            return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Смена", "Открыть смену", "Вход: порции заготовки на каждое блюдо с рецептом. Ноль ставит стоп. Вчерашний стоп и приоритет снимаются.")
+        .Ok<ShiftCurrentView>()
+        .Bad();
+        group.MapPost("/close", async (ShiftService shift, ClaimsPrincipal principal, CancellationToken cancellationToken) =>
+        {
+            var result = await shift.CloseAsync(UserId(principal), principal.Identity?.Name ?? "шеф", cancellationToken);
+            return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Смена", "Закрыть смену", "Зал перестаёт принимать заказы. Следующее открытие задаёт заготовки заново.")
+        .Ok<ShiftCurrentView>()
+        .Bad();
         group.MapGet("/history", async (Guid? dishId, ShiftService shift, CancellationToken cancellationToken) =>
             Results.Ok(await shift.HistoryAsync(dishId, cancellationToken)))
             .Docs("Смена", "История стопа", "Кто, когда и почему. dishId необязателен и сужает до одного блюда. Складские движения сюда не входят.")
@@ -398,6 +419,10 @@ public static class EndpointExtensions
             Results.Ok(await stock.DeficitsAsync(cancellationToken)))
             .Docs("Аналитика", "Дефицит", "По отказанным заказам: сколько раз не хватило продукта и сколько доступно сейчас.")
             .Ok<IReadOnlyList<DeficitView>>();
+        group.MapGet("/shifts", async (ShiftService shift, CancellationToken cancellationToken) =>
+            Results.Ok(await shift.JournalAsync(cancellationToken)))
+            .Docs("Аналитика", "Журнал смен", "Кто открыл и закрыл день кухни. Открытая смена без времени закрытия.")
+            .Ok<IReadOnlyList<ShiftJournalRow>>();
         group.MapGet("/spend", async (int? days, ReportService reports, CancellationToken cancellationToken) =>
             Results.Ok(await reports.SpendAsync(days, cancellationToken)))
             .Docs("Аналитика", "Закупки за период", "days — последние сутки, включая сегодня. 0 или пусто — от первой поставки до сегодня, не длиннее 90 дней. Дни без поставок приходят с нулём. Списания — срок и акты, в рублях по цене партии.")
@@ -563,6 +588,10 @@ public sealed record OrderItemRequest(Guid DishId, int Portions);
 public sealed record OrderRequest(Guid Id, string? ConnectionId, IReadOnlyList<OrderItemRequest> Items, string? TableNumber);
 /// <summary>Стоп шефа. Reason: OutOfProduct, Waste, Quality, WontMakeIt, Equipment.</summary>
 public sealed record ShiftStopRequest(string Reason, string? Note);
+
+public sealed record OpenShiftBody(IReadOnlyList<OpenShiftDishBody> Dishes);
+
+public sealed record OpenShiftDishBody(Guid DishId, int Portions);
 /// <summary>На сколько порций заготовки сдвинуть плитку. Отрицательное уменьшает, ноль запрещён.</summary>
 public sealed record ShiftPortionsRequest(int Delta);
 /// <summary>true — предлагать залу, false — убрать из приоритета.</summary>

@@ -49,7 +49,9 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
                 return ServiceResult<DeliveryReceipt>.Bad("Укажите срок годности или срок хранения в часах.");
             }
 
-            var expiresAt = SpecifyUtc(item.ExpiresAt ?? receivedAt.AddHours(item.ShelfLifeHours!.Value));
+            var expiresAt = item.ExpiresAt is DateTime dated && dated.TimeOfDay == TimeSpan.Zero
+                ? EndOfKitchenDay(dated)
+                : SpecifyUtc(item.ExpiresAt ?? receivedAt.AddHours(item.ShelfLifeHours!.Value));
             if (expiresAt <= receivedAt)
             {
                 return ServiceResult<DeliveryReceipt>.Bad("Срок годности должен быть позже даты поставки.");
@@ -182,6 +184,13 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
             batch.CertificateNumber,
             batch.CertificateIssuer,
             batch.CertificateExpiresAt);
+    }
+
+    /// <summary>Дата без времени — до конца этого календарного дня по кухне, UTC+3.</summary>
+    private static DateTime EndOfKitchenDay(DateTime value)
+    {
+        var day = DateOnly.FromDateTime(value);
+        return DateTime.SpecifyKind(day.ToDateTime(new TimeOnly(21, 0)), DateTimeKind.Utc);
     }
 
     private static DateTime SpecifyUtc(DateTime value) =>

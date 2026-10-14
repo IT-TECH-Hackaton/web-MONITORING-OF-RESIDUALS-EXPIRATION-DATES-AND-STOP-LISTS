@@ -252,9 +252,31 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
             return;
         }
 
+        if (await db.ServiceShifts.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+
         var now = clock.UtcNow;
-        var chef = await db.Users.FirstOrDefaultAsync(user => user.Login == "kitchen", cancellationToken);
+        var chef = await db.Users.FirstOrDefaultAsync(user => user.Login == "kitchen", cancellationToken)
+            ?? await db.Users.FirstOrDefaultAsync(cancellationToken);
+        if (chef is null)
+        {
+            return;
+        }
+
         var fresh = !await db.ShiftDishes.AnyAsync(cancellationToken);
+        db.ServiceShifts.Add(new ServiceShift
+        {
+            Id = Guid.NewGuid(),
+            OpenedAt = now.AddHours(-6),
+            OpenedBy = chef.Id,
+        });
+        if (!fresh)
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return;
+        }
 
         await UpsertShiftAsync(MoneyCatalog.PastaDishId, 3, false, true, null, null, cancellationToken);
         await UpsertShiftAsync(MoneyCatalog.CapreseDishId, 4, false, true, null, null, cancellationToken);

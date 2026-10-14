@@ -30,7 +30,7 @@ import { OrdersPage } from "./pages/Orders";
 import { ReportsPage } from "./pages/Reports";
 import { StockPage, StockProductPage } from "./pages/Stock";
 import { useSession } from "./session";
-import { useTheme } from "./theme";
+import { ThemeToggle } from "./theme";
 
 const managerLinks = [
   ["/", "Сводка"],
@@ -46,7 +46,6 @@ const kitchenLinks = [["/kitchen", "Смена"]];
 
 function Shell() {
   const { session, client } = useSession();
-  const { toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   if (!session) return <Navigate to="/login" replace />;
@@ -87,9 +86,11 @@ function Shell() {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter>
-            <span className="px-2 text-xs text-muted-foreground">{session.login}</span>
+            <div className="flex items-center justify-between gap-2 px-2">
+              <span className="text-xs text-muted-foreground">{session.login}</span>
+              <ThemeToggle compact />
+            </div>
             <Button variant="outline" onClick={() => { client.logout(); navigate("/login"); }}>Выйти</Button>
-            <Button variant="ghost" onClick={(event) => toggleTheme(event)}>Тема</Button>
           </SidebarFooter>
         </Sidebar>
         <SidebarInset>

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Bar, BarChart, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import { useSession } from "../session";
-import { Empty, ErrorText, Qty } from "../ui";
+import { Empty, ErrorText, formatWhen, Qty } from "../ui";
 import { WeeklyForecastPanel } from "./WeeklyForecast";
 
 const periods = [
@@ -26,6 +26,16 @@ const dayColors = ["#ef5340", "#e0a14a", "#5dcaa0", "#6cb6ff", "#c084fc", "#f071
 
 function rub(value: number) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value);
+}
+
+function lasted(openedAt: string, closedAt: string | null) {
+  const start = new Date(openedAt).getTime();
+  const end = closedAt ? new Date(closedAt).getTime() : Date.now();
+  const minutes = Math.max(0, Math.round((end - start) / 60000));
+  if (minutes < 60) return `${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} ч` : `${hours} ч ${rest} мин`;
 }
 
 function dayLabel(day: string) {
@@ -134,6 +144,7 @@ export function AnalyticsPage() {
   const spend = useQuery({ queryKey: ["spend", days], queryFn: () => client.spend(days) });
   const deficits = useQuery({ queryKey: ["deficits"], queryFn: () => client.deficits() });
   const weekly = useQuery({ queryKey: ["weekly-forecast"], queryFn: () => client.weeklyForecast() });
+  const shifts = useQuery({ queryKey: ["shift-journal"], queryFn: () => client.shiftJournal() });
   const data = spend.data;
 
   return (
@@ -151,6 +162,36 @@ export function AnalyticsPage() {
           ))}
         </div>
       </header>
+
+      <article className="rep-fold">
+        <h2 className="rep-block-title">Смены</h2>
+        <div className="rep-fold-body">
+          {shifts.isLoading ? <p>Смотрим смены…</p> : null}
+          {shifts.error ? <ErrorText error={shifts.error} /> : null}
+          {shifts.data?.length === 0 ? <Empty>Смен ещё не было.</Empty> : null}
+          {shifts.data && shifts.data.length > 0 ? (
+            <div className="rep-scroll">
+              <table className="rep-table rep-staff">
+                <thead>
+                  <tr><th>Статус</th><th>Открыл</th><th>Когда</th><th>Закрыл</th><th>Когда</th><th className="num">Длилась</th></tr>
+                </thead>
+                <tbody>
+                  {shifts.data.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.isOpen ? "открыта" : "закрыта"}</td>
+                      <td>{row.openedBy}</td>
+                      <td>{formatWhen(row.openedAt)}</td>
+                      <td className={row.closedBy ? undefined : "is-zero"}>{row.closedBy ?? "—"}</td>
+                      <td className={row.closedAt ? undefined : "is-zero"}>{row.closedAt ? formatWhen(row.closedAt) : "—"}</td>
+                      <td className="num">{lasted(row.openedAt, row.closedAt)}{row.isOpen ? " · идёт" : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      </article>
 
       {spend.isLoading ? <p>Считаем период…</p> : null}
       {spend.error ? <ErrorText error={spend.error} /> : null}

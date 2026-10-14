@@ -150,9 +150,21 @@ public sealed class StockMovement
     public Batch Batch { get; set; } = null!;
 }
 
+/// <summary>Один рабочий день кухни. Пока ClosedAt пустой, смена открыта и зал видит заготовки.</summary>
+public sealed class ServiceShift
+{
+    public Guid Id { get; set; }
+    public DateTime OpenedAt { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public Guid OpenedBy { get; set; }
+    public Guid? ClosedBy { get; set; }
+    public UserAccount OpenedByUser { get; set; } = null!;
+    public UserAccount? ClosedByUser { get; set; }
+}
+
 /// <summary>
-/// Состояние блюда на смене. PrepPortions null — шеф лимит не ставил, зал не режется складом.
-/// Ноль порций или IsStopped закрывают блюдо. Это не остаток в килограммах.
+/// Заготовка блюда на открытой смене. Ноль порций закрывает зал, даже если склад полный.
+/// Это не остаток в килограммах и не живёт после закрытия смены.
 /// </summary>
 public sealed class ShiftDish
 {

@@ -98,6 +98,11 @@ public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier 
         if (opened && batch.OpenedAt is null)
         {
             batch.OpenedAt = clock.UtcNow;
+            var openedUntil = batch.OpenedAt.Value.AddHours(24);
+            if (openedUntil < batch.ExpiresAt)
+            {
+                batch.ExpiresAt = openedUntil;
+            }
         }
 
         if (note is { Length: > 300 })

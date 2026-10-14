@@ -179,6 +179,21 @@ export type StopEntry = {
   stopSource: StopSource | null;
 };
 
+export type ShiftJournalRow = {
+  id: string;
+  openedAt: string;
+  closedAt: string | null;
+  openedBy: string;
+  closedBy: string | null;
+  isOpen: boolean;
+};
+
+export type ShiftCurrent = {
+  isOpen: boolean;
+  openedAt: string | null;
+  closedAt: string | null;
+};
+
 export type ShiftHistoryEntry = {
   id: string;
   dishId: string;

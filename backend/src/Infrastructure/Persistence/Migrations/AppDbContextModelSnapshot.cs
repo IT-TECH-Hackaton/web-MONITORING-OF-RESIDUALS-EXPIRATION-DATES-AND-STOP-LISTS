@@ -418,6 +418,44 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ServiceShift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at");
+
+                    b.Property<Guid?>("ClosedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("closed_by");
+
+                    b.Property<DateTime>("OpenedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("opened_at");
+
+                    b.Property<Guid>("OpenedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("opened_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_service_shifts");
+
+                    b.HasIndex("ClosedAt")
+                        .HasDatabaseName("ix_service_shifts_closed_at");
+
+                    b.HasIndex("ClosedBy")
+                        .HasDatabaseName("ix_service_shifts_closed_by");
+
+                    b.HasIndex("OpenedBy")
+                        .HasDatabaseName("ix_service_shifts_opened_by");
+
+                    b.ToTable("service_shifts", (string)null);
+                });
+
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftDish", b =>
                 {
                     b.Property<Guid>("DishId")
@@ -712,6 +750,25 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("RequestedByUser");
+                });
+
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ServiceShift", b =>
+                {
+                    b.HasOne("Monitoring.Infrastructure.Persistence.UserAccount", "ClosedByUser")
+                        .WithMany()
+                        .HasForeignKey("ClosedBy")
+                        .HasConstraintName("fk_service_shifts_users_closed_by");
+
+                    b.HasOne("Monitoring.Infrastructure.Persistence.UserAccount", "OpenedByUser")
+                        .WithMany()
+                        .HasForeignKey("OpenedBy")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_service_shifts_users_opened_by");
+
+                    b.Navigation("ClosedByUser");
+
+                    b.Navigation("OpenedByUser");
                 });
 
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.ShiftDish", b =>

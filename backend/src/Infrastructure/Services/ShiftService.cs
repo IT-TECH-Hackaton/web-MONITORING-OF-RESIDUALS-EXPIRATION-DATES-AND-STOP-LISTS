@@ -8,9 +8,125 @@ namespace Monitoring.Infrastructure.Services;
 
 public sealed record ShiftHistoryView(Guid Id, Guid DishId, DateTime At, string ActorLogin, string Text);
 
+public sealed record ShiftCurrentView(bool IsOpen, DateTime? OpenedAt, DateTime? ClosedAt);
+
+public sealed record ShiftJournalRow(Guid Id, DateTime OpenedAt, DateTime? ClosedAt, string OpenedBy, string? ClosedBy, bool IsOpen);
+
+public sealed record OpenShiftDish(Guid DishId, int Portions);
+
 /// <summary>Рука шефа: стоп, порции заготовки и приоритет. Килограммы склада не двигает.</summary>
 public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel stock, StockBroadcaster broadcaster)
 {
+    /// <summary>Журнал смен для менеджера: кто открыл, кто закрыл и сколько длилась.</summary>
+    public async Task<IReadOnlyList<ShiftJournalRow>> JournalAsync(CancellationToken cancellationToken)
+    {
+        var rows = await db.ServiceShifts.AsNoTracking()
+            .Include(row => row.OpenedByUser)
+            .Include(row => row.ClosedByUser)
+            .OrderByDescending(row => row.OpenedAt)
+            .Take(30)
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => new ShiftJournalRow(
+            row.Id,
+            row.OpenedAt,
+            row.ClosedAt,
+            Person(row.OpenedByUser),
+            row.ClosedByUser is null ? null : Person(row.ClosedByUser),
+            row.ClosedAt is null)).ToList();
+    }
+
+    /// <summary>Открыта ли смена. ClosedAt последней закрытой нужен, чтобы зал понимал, что день уже кончился.</summary>
+    public async Task<ShiftCurrentView> CurrentAsync(CancellationToken cancellationToken)
+    {
+        var open = await db.ServiceShifts.AsNoTracking()
+            .Where(row => row.ClosedAt == null)
+            .OrderByDescending(row => row.OpenedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (open is not null)
+        {
+            return new ShiftCurrentView(true, open.OpenedAt, null);
+        }
+
+        var last = await db.ServiceShifts.AsNoTracking()
+            .OrderByDescending(row => row.OpenedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        return new ShiftCurrentView(false, last?.OpenedAt, last?.ClosedAt);
+    }
+
+    /// <summary>
+    /// Открывает день. Вход: порции заготовки на каждое активное блюдо с рецептом, ноль допустим.
+    /// Вчерашние стоп и приоритет снимаются. Ноль сразу закрывает блюдо для зала.
+    /// </summary>
+    public async Task<ServiceResult<ShiftCurrentView>> OpenAsync(
+        IReadOnlyList<OpenShiftDish> dishes,
+        Guid actorId,
+        string actorLogin,
+        CancellationToken cancellationToken)
+    {
+        if (await IsOpenAsync(cancellationToken))
+        {
+            return ServiceResult<ShiftCurrentView>.Bad("Смена уже открыта.");
+        }
+
+        if (dishes.Any(row => row.Portions < 0))
+        {
+            return ServiceResult<ShiftCurrentView>.Bad("Порции заготовки не бывают отрицательными.");
+        }
+
+        var required = await db.Dishes.AsNoTracking()
+            .Where(dish => dish.IsActive && dish.Ingredients.Any())
+            .Select(dish => dish.Id)
+            .ToListAsync(cancellationToken);
+        var given = dishes.GroupBy(row => row.DishId).ToDictionary(group => group.Key, group => group.Last().Portions);
+        if (required.Any(id => !given.ContainsKey(id)))
+        {
+            return ServiceResult<ShiftCurrentView>.Bad("Укажите заготовку для каждого блюда.");
+        }
+
+        var now = clock.UtcNow;
+        db.ServiceShifts.Add(new ServiceShift { Id = Guid.NewGuid(), OpenedAt = now, OpenedBy = actorId });
+        foreach (var dishId in required)
+        {
+            var portions = given[dishId];
+            var state = await LoadOrCreateAsync(dishId, cancellationToken);
+            state.PrepPortions = portions;
+            state.IsPriority = false;
+            state.IsStopped = portions == 0;
+            state.StopReason = portions == 0 ? nameof(StopReason.OutOfProduct) : null;
+            state.StopNote = portions == 0 ? "Заготовка не задана" : null;
+            state.StoppedBy = portions == 0 ? actorId : null;
+            state.StoppedAt = portions == 0 ? now : null;
+            AddHistory(dishId, actorLogin, portions == 0 ? "Смена открыта, заготовка 0 — стоп" : $"Смена открыта, заготовка {portions}");
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await broadcaster.PublishAsync(new StockChange([], [], [], null, null, null), cancellationToken);
+        return ServiceResult<ShiftCurrentView>.Ok(new ShiftCurrentView(true, now, null));
+    }
+
+    /// <summary>Закрывает день. Зал перестаёт брать заказы, заготовки до следующего открытия не живут.</summary>
+    public async Task<ServiceResult<ShiftCurrentView>> CloseAsync(Guid actorId, string actorLogin, CancellationToken cancellationToken)
+    {
+        var open = await db.ServiceShifts.FirstOrDefaultAsync(row => row.ClosedAt == null, cancellationToken);
+        if (open is null)
+        {
+            return ServiceResult<ShiftCurrentView>.Bad("Смена уже закрыта.");
+        }
+
+        var now = clock.UtcNow;
+        open.ClosedAt = now;
+        open.ClosedBy = actorId;
+        var dishIds = await db.ShiftDishes.Select(row => row.DishId).ToListAsync(cancellationToken);
+        foreach (var dishId in dishIds)
+        {
+            AddHistory(dishId, actorLogin, "Смена закрыта");
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        await broadcaster.PublishAsync(new StockChange([], [], [], null, null, null), cancellationToken);
+        return ServiceResult<ShiftCurrentView>.Ok(new ShiftCurrentView(false, open.OpenedAt, now));
+    }
+
     /// <summary>
     /// Вход: блюдо, причина, заметка, кто нажал. Порции становятся 0, приоритет снимается, пишется история.
     /// Выход: плитка или текст ошибки. После сохранения шлёт обновление смены.
@@ -23,6 +139,11 @@ public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel s
         string actorLogin,
         CancellationToken cancellationToken)
     {
+        if (!await IsOpenAsync(cancellationToken))
+        {
+            return ServiceResult<ShiftTile>.Bad("Сначала откройте смену.");
+        }
+
         if (!Enum.TryParse<StopReason>(reason, true, out var parsed))
         {
             return ServiceResult<ShiftTile>.Bad("Причина стопа: OutOfProduct, Waste, Quality, WontMakeIt или Equipment.");
@@ -51,6 +172,11 @@ public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel s
     /// <summary>Снимает стоп. Если порций нет или ноль — ошибка «сначала добавьте порции».</summary>
     public async Task<ServiceResult<ShiftTile>> ResumeAsync(Guid dishId, string actorLogin, CancellationToken cancellationToken)
     {
+        if (!await IsOpenAsync(cancellationToken))
+        {
+            return ServiceResult<ShiftTile>.Bad("Сначала откройте смену.");
+        }
+
         var state = await db.ShiftDishes.FirstOrDefaultAsync(row => row.DishId == dishId, cancellationToken);
         if (state is null || !state.IsStopped)
         {
@@ -79,6 +205,11 @@ public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel s
     /// </summary>
     public async Task<ServiceResult<ShiftTile>> PortionsAsync(Guid dishId, int delta, string actorLogin, CancellationToken cancellationToken)
     {
+        if (!await IsOpenAsync(cancellationToken))
+        {
+            return ServiceResult<ShiftTile>.Bad("Сначала откройте смену.");
+        }
+
         if (delta == 0)
         {
             return ServiceResult<ShiftTile>.Bad("Дельта порций не может быть нулём.");
@@ -129,6 +260,11 @@ public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel s
     /// <summary>Включает или выключает «предлагать залу». Стоп и ноль порций в приоритет не ставятся.</summary>
     public async Task<ServiceResult<ShiftTile>> PriorityAsync(Guid dishId, bool on, string actorLogin, CancellationToken cancellationToken)
     {
+        if (!await IsOpenAsync(cancellationToken))
+        {
+            return ServiceResult<ShiftTile>.Bad("Сначала откройте смену.");
+        }
+
         var state = await LoadOrCreateAsync(dishId, cancellationToken);
         if (state.IsStopped || state.PrepPortions == 0)
         {
@@ -186,6 +322,9 @@ public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel s
         }
     }
 
+    private Task<bool> IsOpenAsync(CancellationToken cancellationToken) =>
+        db.ServiceShifts.AnyAsync(row => row.ClosedAt == null, cancellationToken);
+
     private async Task<ShiftDish> LoadOrCreateAsync(Guid dishId, CancellationToken cancellationToken)
     {
         var state = await db.ShiftDishes.FirstOrDefaultAsync(row => row.DishId == dishId, cancellationToken);
@@ -211,6 +350,9 @@ public sealed class ShiftService(AppDbContext db, IClock clock, StockReadModel s
             ActorLogin = actor,
             Text = Trim(text),
         });
+
+    private static string Person(UserAccount user) =>
+        string.IsNullOrWhiteSpace(user.DisplayName) ? user.Login : user.DisplayName;
 
     private static string Trim(string value) => value.Trim().Length <= 300 ? value.Trim() : value.Trim()[..300];
 

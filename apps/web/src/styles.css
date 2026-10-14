@@ -372,10 +372,21 @@ html.dark .chip-low { background: #3a2e1c; color: #f0c27a; }
 .floor-search { display: grid; gap: 6px; margin: 4px 0 8px; position: sticky; top: 0; z-index: 3; background: var(--paper); padding-bottom: 4px; }
 .floor-search input { min-height: 48px; font-size: 16px; }
 .note-add { width: 100%; min-height: 44px; margin-bottom: 12px; }
-.floor-mic { display: grid; justify-items: center; gap: 8px; margin: 12px 0; }
+.floor-mic {
+  position: fixed;
+  right: 16px;
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  z-index: 6;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  width: min(280px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.floor-mic > * { pointer-events: auto; }
 .floor-mic-btn {
-  width: 88px;
-  height: 88px;
+  width: 52px;
+  height: 52px;
   border: 0;
   border-radius: 50%;
   background: var(--card);
@@ -385,16 +396,24 @@ html.dark .chip-low { background: #3a2e1c; color: #f0c27a; }
   position: relative;
 }
 .floor-mic-btn:hover { box-shadow: 0 0 0 1px var(--accent); }
+.floor-mic .chip-label { margin: 0; }
+.floor-mic .reason, .floor-mic .error-text, .floor-mic .note-add {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin: 0;
+}
 .floor-mic-core {
-  width: 28px;
-  height: 28px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--accent);
 }
 .floor-mic-btn.is-on { background: var(--accent); box-shadow: none; }
 .floor-mic-btn.is-on .floor-mic-core {
-  width: 22px;
-  height: 22px;
+  width: 14px;
+  height: 14px;
   border-radius: 6px;
   background: #fff;
 }

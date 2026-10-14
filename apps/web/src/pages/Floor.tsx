@@ -161,6 +161,13 @@ function FloorListen({ onSave }: { onSave: (text: string) => void }) {
 
   return (
     <section className="floor-mic" aria-label="Расшифровка разговора">
+      {error ? <p className="error-text">{error}</p> : null}
+      {status ? <p className="reason">{status}</p> : null}
+      {listening && !status && !text ? <p className="reason">Слушаю…</p> : null}
+      {text ? <p className="reason floor-transcript">{text}</p> : null}
+      {text ? (
+        <button type="button" className="btn-ghost note-add" onClick={save}>В заметку</button>
+      ) : null}
       <button
         type="button"
         className={listening ? "floor-mic-btn is-on" : "floor-mic-btn"}
@@ -170,21 +177,13 @@ function FloorListen({ onSave }: { onSave: (text: string) => void }) {
       >
         <span className="floor-mic-core" />
       </button>
-      <span className="chip-label">{listening ? "Стоп" : "Слушать"}</span>
-      {error ? <p className="error-text">{error}</p> : null}
-      {status ? <p className="reason">{status}</p> : null}
-      {listening && !status && !text ? <p className="reason">Слушаю…</p> : null}
-      {text ? <p className="reason floor-transcript">{text}</p> : null}
-      {text ? (
-        <button type="button" className="btn-ghost note-add" onClick={save}>В заметку</button>
-      ) : null}
     </section>
   );
 }
 
 export function FloorShell() {
   const { session, client } = useSession();
-  const { count } = useCart();
+  const cart = useCart();
   const navigate = useNavigate();
   return (
     <div className="floor">
@@ -201,10 +200,11 @@ export function FloorShell() {
       <main className="floor-body">
         <Outlet />
       </main>
+      <FloorListen onSave={(text) => cart.addNote(text)} />
       <nav className="floor-tabs">
         <NavLink to="/floor" end>Зал</NavLink>
         <NavLink to="/floor/order">
-          Заказ{count > 0 ? <span className="tab-count">{count}</span> : null}
+          Заказ{cart.count > 0 ? <span className="tab-count">{cart.count}</span> : null}
         </NavLink>
       </nav>
     </div>
@@ -237,6 +237,7 @@ export function FloorMenuPage() {
   const [hint, setHint] = useState<string | null>(null);
   const [why, setWhy] = useState<StopEntry | null>(null);
   const dishes = stop.data ?? [];
+  const shiftClosed = dishes.length > 0 && dishes.every((entry) => entry.isStopped && entry.reason === "Смена закрыта");
   const stopped = dishes.filter((entry) => entry.isStopped);
   const low = dishes.filter((entry) => isLow(entry));
   const priority = dishes.filter((entry) => entry.isPriority && !entry.isStopped);
@@ -286,6 +287,7 @@ export function FloorMenuPage() {
 
   return (
     <>
+      {shiftClosed ? <p className="hint">Смена закрыта. Зал заказы не берёт.</p> : null}
       <section className="chip-block" aria-label="Стоп-лист">
         <p className="chip-label">Стоп · нажми почему</p>
         <div className="chip-row">
@@ -349,8 +351,6 @@ export function FloorMenuPage() {
           autoComplete="off"
         />
       </label>
-      {/* Микрофон зала. Замени false на true, когда нужен для демо. */}
-      {false ? <FloorListen onSave={(text) => { cart.addNote(text); setHint(`Заметка: ${text}`); }} /> : null}
       {canNote ? (
         <button type="button" className="btn-ghost note-add" onClick={addNote}>
           Заметка

@@ -57,7 +57,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!session?.accessToken) return;
     const connection = connectLive(apiBaseUrl, () => memory.session?.accessToken ?? "");
     const refresh = () => {
-      for (const key of ["dashboard", "stock", "batches", "stop-list", "priority", "hot-offers", "orders", "deliveries", "purchase-lines", "write-offs", "deficits", "weekly-forecast", "spend", "kitchen", "reports"]) {
+      for (const key of ["dashboard", "stock", "batches", "stop-list", "priority", "hot-offers", "orders", "deliveries", "purchase-lines", "write-offs", "deficits", "weekly-forecast", "spend", "kitchen", "reports", "shift-current", "shift-journal"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     };

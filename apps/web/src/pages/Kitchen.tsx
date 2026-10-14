@@ -56,6 +56,61 @@ function messageOf(error: unknown) {
   return error instanceof Error ? error.message : "Не получилось сохранить смену";
 }
 
+function OpenShiftSheet({
+  dishes,
+  onClose,
+  onOpen,
+}: {
+  dishes: StopEntry[];
+  onClose: () => void;
+  onOpen: (rows: { dishId: string; portions: number }[]) => Promise<void>;
+}) {
+  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(dishes.map((dish) => [dish.dishId, "0"])));
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    const rows = dishes.map((dish) => ({ dishId: dish.dishId, portions: Number(qty[dish.dishId] ?? "0") }));
+    if (rows.some((row) => !Number.isInteger(row.portions) || row.portions < 0)) {
+      setError("Порции — целое число от нуля.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await onOpen(rows);
+    } catch (caught) {
+      setError(messageOf(caught));
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="shift-sheet" role="dialog" aria-labelledby="open-shift-title" onClick={(event) => event.stopPropagation()}>
+        <div>
+          <p className="chip-label">Новый день</p>
+          <h2 id="open-shift-title">Заготовки на смену</h2>
+          <p className="reason">Ноль закрывает блюдо для зала. Склад всё равно остановит плитку, если сырья нет.</p>
+        </div>
+        <div className="stack">
+          {dishes.map((dish) => (
+            <label key={dish.dishId} className="waste-line">
+              <strong>{dish.dishName}</strong>
+              <input inputMode="numeric" min={0} value={qty[dish.dishId] ?? "0"} onChange={(event) => setQty((current) => ({ ...current, [dish.dishId]: event.target.value }))} />
+            </label>
+          ))}
+        </div>
+        {error ? <p className="error-text">{error}</p> : null}
+        <div className="btn-row">
+          <button type="button" className="btn" disabled={pending} onClick={() => void submit()}>Открыть смену</button>
+          <button type="button" className="btn-ghost" onClick={onClose}>Отмена</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function purchaseWho(source: PurchaseSource) {
   if (source === "Chef") return "кухня";
   if (source === "Forecast") return "прогноз";
@@ -138,6 +193,7 @@ export function KitchenPage() {
   const { client } = useSession();
   const queryClient = useQueryClient();
   const stop = useQuery({ queryKey: ["stop-list"], queryFn: () => client.stopList() });
+  const shift = useQuery({ queryKey: ["shift-current"], queryFn: () => client.shiftCurrent() });
   const offers = useQuery({ queryKey: ["hot-offers"], queryFn: () => client.hotOffers() });
   const kitchen = useQuery({ queryKey: ["kitchen"], queryFn: () => client.kitchen() });
   const products = useQuery({ queryKey: ["products"], queryFn: () => client.products() });
@@ -145,6 +201,7 @@ export function KitchenPage() {
   const dishes = stop.data ?? [];
   const [openId, setOpenId] = useState<string | null>(null);
   const [wasteOpen, setWasteOpen] = useState(false);
+  const [openShift, setOpenShift] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [hint, setHint] = useState<string | null>(null);
@@ -153,6 +210,7 @@ export function KitchenPage() {
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["stop-list"] });
+    await queryClient.invalidateQueries({ queryKey: ["shift-current"] });
     await queryClient.invalidateQueries({ queryKey: ["priority"] });
     await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     await queryClient.invalidateQueries({ queryKey: ["kitchen"] });
@@ -202,7 +260,14 @@ export function KitchenPage() {
           <h1>Смена</h1>
           <p>Стоп зала: шеф, ноль заготовки или склад не тянет на порцию. Кандидат — сырья мало, блюдо ещё открыто. Заказ с зала сам минусует плитку.</p>
         </div>
-        <button type="button" className="btn-ghost" onClick={() => setWasteOpen(true)}>Акт списания</button>
+        <div className="btn-row">
+          {shift.data?.isOpen ? (
+            <button type="button" className="btn" onClick={() => { if (window.confirm("Закрыть смену? Зал перестанет принимать заказы.")) void run(() => client.shiftClose(), "Смена закрыта"); }}>Закрыть смену</button>
+          ) : (
+            <button type="button" className="btn" onClick={() => setOpenShift(true)} disabled={dishes.length === 0}>Открыть смену</button>
+          )}
+          <button type="button" className="btn-ghost" onClick={() => setWasteOpen(true)}>Акт списания</button>
+        </div>
       </div>
       {hint ? <p className="hint">{hint}</p> : null}
       <div className="shift-toolbar">
@@ -311,6 +376,18 @@ export function KitchenPage() {
           onStop={(reason, note) => void run(() => client.shiftStop(open.dishId, reason, note), `${open.dishName} в стопе`)}
           onResume={() => void run(() => client.shiftResume(open.dishId), `${open.dishName}: стоп снят`)}
           onPriority={() => void run(() => client.shiftPriority(open.dishId, !open.isPriority), open.isPriority ? "Убрали из приоритета" : "В приоритете")}
+        />
+      ) : null}
+      {openShift ? (
+        <OpenShiftSheet
+          dishes={dishes}
+          onClose={() => setOpenShift(false)}
+          onOpen={async (rows) => {
+            await client.shiftOpen(rows);
+            setOpenShift(false);
+            setHint("Смена открыта");
+            await refresh();
+          }}
         />
       ) : null}
       {wasteOpen ? (

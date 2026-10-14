@@ -15,6 +15,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<OrderShortage> OrderShortages => Set<OrderShortage>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
+    public DbSet<ServiceShift> ServiceShifts => Set<ServiceShift>();
     public DbSet<ShiftDish> ShiftDishes => Set<ShiftDish>();
     public DbSet<ShiftHistory> ShiftHistory => Set<ShiftHistory>();
     public DbSet<PurchaseLine> PurchaseLines => Set<PurchaseLine>();
@@ -121,6 +122,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(movement => movement.Reason).HasMaxLength(32);
             entity.HasIndex(movement => movement.CreatedAt);
             entity.HasOne(movement => movement.Batch).WithMany(batch => batch.Movements).HasForeignKey(movement => movement.BatchId);
+        });
+
+        modelBuilder.Entity<ServiceShift>(entity =>
+        {
+            entity.ToTable("service_shifts");
+            entity.HasIndex(row => row.ClosedAt);
+            entity.HasOne(row => row.OpenedByUser).WithMany().HasForeignKey(row => row.OpenedBy);
+            entity.HasOne(row => row.ClosedByUser).WithMany().HasForeignKey(row => row.ClosedBy);
         });
 
         modelBuilder.Entity<ShiftDish>(entity =>

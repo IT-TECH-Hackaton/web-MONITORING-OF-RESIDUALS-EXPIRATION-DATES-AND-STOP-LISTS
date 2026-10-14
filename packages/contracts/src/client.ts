@@ -1,4 +1,4 @@
-import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Session, type ShiftHistoryEntry, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
+import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Session, type ShiftCurrent, type ShiftHistoryEntry, type ShiftJournalRow, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
 
 export type TokenStore = {
   getAccess: () => string | null;
@@ -132,6 +132,10 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
       request(`/api/analytics/write-offs${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`).then((response) => json<WriteOff[]>(response)),
     createWriteOff: (input: { reason: WriteOffReason; items: { productId: string; quantity: number; batchId?: string | null }[] }) =>
       request("/api/write-offs", { method: "POST", body: JSON.stringify(input) }).then((response) => json<{ count: number }>(response)),
+    shiftCurrent: () => request("/api/shift/current").then((response) => json<ShiftCurrent>(response)),
+    shiftOpen: (dishes: { dishId: string; portions: number }[]) =>
+      request("/api/shift/open", { method: "POST", body: JSON.stringify({ dishes }) }).then((response) => json<ShiftCurrent>(response)),
+    shiftClose: () => request("/api/shift/close", { method: "POST" }).then((response) => json<ShiftCurrent>(response)),
     shiftHistory: (dishId?: string) =>
       request(`/api/shift/history${dishId ? `?dishId=${dishId}` : ""}`).then((response) => json<ShiftHistoryEntry[]>(response)),
     shiftStop: (dishId: string, reason: string, note: string) =>
@@ -145,6 +149,7 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     deficits: () => request("/api/analytics/deficits").then((response) => json<Deficit[]>(response)),
     weeklyForecast: () => request("/api/analytics/weekly-forecast").then((response) => json<WeeklyForecastReport>(response)),
     spend: (days: number) => request(`/api/analytics/spend?days=${days}`).then((response) => json<SpendReport>(response)),
+    shiftJournal: () => request("/api/analytics/shifts").then((response) => json<ShiftJournalRow[]>(response)),
     reports: () => request("/api/reports").then((response) => json<MoneyReport>(response)),
     kitchen: () => request("/api/kitchen").then((response) => json<KitchenBoard>(response)),
     markDish: (orderId: string, itemId: string, status: KitchenStatus, note: string) =>
