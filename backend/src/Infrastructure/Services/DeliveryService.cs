@@ -229,6 +229,183 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
         return ServiceResult<DeliveryView>.Ok((await GetAsync(id, cancellationToken))!);
     }
 
+    /// <summary>Фиксированная закупка, которую поставщик предлагает заведению. Склад не трогает.</summary>
+    public async Task<IReadOnlyList<SupplyOfferLine>> StandardOfferAsync(CancellationToken cancellationToken)
+    {
+        var products = await CatalogAsync(cancellationToken);
+        var today = DateOnly.FromDateTime(clock.UtcNow);
+        return products
+            .Select(product => new SupplyOfferLine(
+                product.Id,
+                product.Name,
+                product.Unit,
+                StandingQuantity(product.Name, product.Unit),
+                EndOfKitchenDay(today.AddDays(StandingDays(product.Name)).ToDateTime(TimeOnly.MinValue))))
+            .ToList();
+    }
+
+    /// <summary>Предложение уходит менеджеру как машина «приехала». Срок — пример, кухня поправит на приёмке. Склад не растёт.</summary>
+    public async Task<ServiceResult<DeliveryView>> SendProposalAsync(IReadOnlyList<(Guid ProductId, decimal Quantity, DateTime ExpiresAt)> lines, CancellationToken cancellationToken)
+    {
+        var kept = lines.Where(line => line.Quantity > 0).ToList();
+        if (kept.Count == 0)
+        {
+            return ServiceResult<DeliveryView>.Bad("В предложении не осталось позиций.");
+        }
+
+        var now = clock.UtcNow;
+        var batches = new List<Batch>();
+        var id = Guid.NewGuid();
+        foreach (var line in kept)
+        {
+            if (line.Quantity > 1_000_000_000m)
+            {
+                return ServiceResult<DeliveryView>.Bad("Количество от нуля до миллиарда.");
+            }
+
+            var product = await db.Products.FirstOrDefaultAsync(row => row.Id == line.ProductId && row.IsActive, cancellationToken);
+            if (product is null)
+            {
+                return ServiceResult<DeliveryView>.Bad("Продукта нет в каталоге.");
+            }
+
+            var expiresAt = line.ExpiresAt.TimeOfDay == TimeSpan.Zero ? EndOfKitchenDay(line.ExpiresAt) : SpecifyUtc(line.ExpiresAt);
+            if (expiresAt <= now || expiresAt.Year >= 2090)
+            {
+                return ServiceResult<DeliveryView>.Bad($"У «{product.Name}» укажите срок годности позже сегодня.");
+            }
+
+            batches.Add(new Batch
+            {
+                Id = Guid.NewGuid(),
+                DeliveryId = id,
+                ProductId = product.Id,
+                QuantityInitial = line.Quantity,
+                QuantityRemaining = line.Quantity,
+                UnitCost = product.PurchasePrice,
+                ReceivedAt = now,
+                ExpiresAt = expiresAt,
+                Status = BatchStatus.Arrived,
+            });
+        }
+
+        db.Deliveries.Add(new Delivery
+        {
+            Id = id,
+            Number = $"СТД-{now:yyyyMMdd-HHmmss}",
+            Supplier = "Стандартная закупка",
+            CreatedAt = now,
+            Stage = DeliveryStage.Parked,
+            Batches = batches,
+        });
+        await db.SaveChangesAsync(cancellationToken);
+        return ServiceResult<DeliveryView>.Ok((await GetAsync(id, cancellationToken))!);
+    }
+
+    /// <summary>Менеджер правит предложение, пока оно ещё не в приёмке. Ноль убирает строку. Склад не меняется.</summary>
+    public async Task<ServiceResult<DeliveryView>> ReviseParkedAsync(Guid id, IReadOnlyList<(Guid BatchId, decimal Quantity, DateTime? ExpiresAt)> lines, CancellationToken cancellationToken)
+    {
+        var delivery = await db.Deliveries.Include(row => row.Batches).FirstOrDefaultAsync(row => row.Id == id, cancellationToken);
+        if (delivery is null)
+        {
+            return ServiceResult<DeliveryView>.Bad("Поставка не найдена.");
+        }
+
+        if (delivery.Stage != DeliveryStage.Parked)
+        {
+            return ServiceResult<DeliveryView>.Bad("Править можно только предложение, которое ещё не в приёмке.");
+        }
+
+        var byId = lines.ToDictionary(line => line.BatchId);
+        var now = clock.UtcNow;
+        foreach (var batch in delivery.Batches.Where(batch => batch.Status == BatchStatus.Arrived).ToList())
+        {
+            if (!byId.TryGetValue(batch.Id, out var line) || line.Quantity <= 0)
+            {
+                db.Batches.Remove(batch);
+                continue;
+            }
+
+            if (line.Quantity > 1_000_000_000m)
+            {
+                return ServiceResult<DeliveryView>.Bad("Количество от нуля до миллиарда.");
+            }
+
+            batch.QuantityInitial = line.Quantity;
+            batch.QuantityRemaining = line.Quantity;
+            if (line.ExpiresAt is DateTime dated)
+            {
+                var expiresAt = dated.TimeOfDay == TimeSpan.Zero ? EndOfKitchenDay(dated) : SpecifyUtc(dated);
+                if (expiresAt <= now || expiresAt.Year >= 2090)
+                {
+                    return ServiceResult<DeliveryView>.Bad("Срок годности должен быть позже сегодня.");
+                }
+
+                batch.ExpiresAt = expiresAt;
+            }
+        }
+
+        if (!delivery.Batches.Any(batch => batch.Status == BatchStatus.Arrived && db.Entry(batch).State != EntityState.Deleted))
+        {
+            return ServiceResult<DeliveryView>.Bad("Оставьте хотя бы одну позицию.");
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return ServiceResult<DeliveryView>.Ok((await GetAsync(id, cancellationToken))!);
+    }
+
+    private static decimal StandingQuantity(string name, Unit unit)
+    {
+        var key = name.ToLowerInvariant();
+        if (key.Contains("лосос")) return 4000;
+        if (key.Contains("моцарел")) return 3000;
+        if (key.Contains("томат")) return 5000;
+        if (key.Contains("базилик")) return 200;
+        if (key.Contains("спагет") || key.Contains("паста")) return 5000;
+        if (key.Contains("сливк")) return 3000;
+        if (key.Contains("кофе")) return 2000;
+        if (key.Contains("молок")) return 10000;
+        if (key.Contains("куриц")) return 6000;
+        if (key.Contains("говяд")) return 5000;
+        if (key.Contains("лук")) return 3000;
+        if (key.Contains("картоф")) return 8000;
+        if (key.Contains("мука")) return 5000;
+        if (key.Contains("яйц")) return 90;
+        if (key.Contains("сливочн")) return 2000;
+        if (key.Contains("масло")) return 3000;
+        if (key.Contains("сахар")) return 2000;
+        if (key.Contains("кревет")) return 2000;
+        if (key.Contains("лимон")) return 1500;
+        if (key.Contains("чеснок")) return 500;
+        if (key.Contains("рис")) return 4000;
+        if (key.Contains("огурец")) return 3000;
+        if (key.Contains("салат")) return 2000;
+        return unit switch
+        {
+            Unit.Pcs => 30,
+            Unit.Ml => 2000,
+            _ => 2000,
+        };
+    }
+
+    /// <summary>Примерный срок с этикетки, в днях от сегодня. Кухня на приёмке ставит дату с пачки.</summary>
+    private static int StandingDays(string name)
+    {
+        var key = name.ToLowerInvariant();
+        if (key.Contains("лосос") || key.Contains("кревет")) return 2;
+        if (key.Contains("куриц") || key.Contains("салат")) return 4;
+        if (key.Contains("говяд") || key.Contains("молок") || key.Contains("базилик")) return 5;
+        if (key.Contains("томат") || key.Contains("огурец")) return 6;
+        if (key.Contains("сливк")) return 7;
+        if (key.Contains("лимон")) return 10;
+        if (key.Contains("моцарел") || key.Contains("лук")) return 12;
+        if (key.Contains("картоф")) return 18;
+        if (key.Contains("чеснок")) return 20;
+        if (key.Contains("яйц") || key.Contains("сливочн")) return 21;
+        if (key.Contains("кофе") || key.Contains("мука") || key.Contains("сахар") || key.Contains("рис") || key.Contains("спагет") || key.Contains("масло")) return 90;
+        return 7;
+    }
+
     public async Task<IReadOnlyList<SupplyProductView>> CatalogAsync(CancellationToken cancellationToken) =>
         await db.Products.AsNoTracking()
             .Where(product => product.IsActive)
@@ -522,6 +699,60 @@ public sealed class DeliveryService(AppDbContext db, IClock clock, StockBroadcas
             await broadcaster.PublishAsync(new StockChange(takenProducts.Distinct().ToList(), [], [], null, null, null), cancellationToken);
         }
 
+        return ServiceResult<DeliveryView>.Ok((await GetAsync(id, cancellationToken))!);
+    }
+
+    /// <summary>Вся поставка снимается, пока она не на складе. Строки заказа снова открыты. Повтор ничего не меняет.</summary>
+    public async Task<ServiceResult<DeliveryView>> CancelAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (!await LockDeliveryAsync(id, cancellationToken))
+        {
+            return ServiceResult<DeliveryView>.Bad("Поставка не найдена.");
+        }
+
+        var delivery = await db.Deliveries.Include(row => row.Batches).FirstOrDefaultAsync(row => row.Id == id, cancellationToken);
+        if (delivery is null)
+        {
+            return ServiceResult<DeliveryView>.Bad("Поставка не найдена.");
+        }
+
+        if (delivery.Stage == DeliveryStage.Cancelled)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return ServiceResult<DeliveryView>.Ok((await GetAsync(id, cancellationToken))!);
+        }
+
+        if (delivery.AcceptedAt is not null || delivery.Stage == DeliveryStage.Accepted)
+        {
+            return ServiceResult<DeliveryView>.Bad("Поставка уже на складе. Её целиком не снять.");
+        }
+
+        if (delivery.Stage is not (DeliveryStage.Parked or DeliveryStage.Receiving or DeliveryStage.KitchenDone))
+        {
+            return ServiceResult<DeliveryView>.Bad("Эту поставку уже нельзя отменить.");
+        }
+
+        foreach (var batch in delivery.Batches)
+        {
+            batch.QuantityRemaining = 0;
+            batch.AcceptedQuantity = 0;
+            batch.Status = BatchStatus.Depleted;
+            batch.KitchenNote = "Поставку отменили целиком";
+        }
+
+        var lines = await db.PurchaseLines
+            .Where(line => line.FulfilledByDeliveryId == id)
+            .ToListAsync(cancellationToken);
+        foreach (var line in lines)
+        {
+            line.FulfilledAt = null;
+            line.FulfilledByDeliveryId = null;
+        }
+
+        delivery.Stage = DeliveryStage.Cancelled;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return ServiceResult<DeliveryView>.Ok((await GetAsync(id, cancellationToken))!);
     }
 

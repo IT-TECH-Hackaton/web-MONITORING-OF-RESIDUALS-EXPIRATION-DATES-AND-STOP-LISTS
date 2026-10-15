@@ -10,7 +10,7 @@ public sealed class UserAccount
     public string DisplayName { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public UserRole Role { get; set; }
-    /// <summary>Ложный, пока менеджер не подтвердил заявку. Такие в систему не входят.</summary>
+    /// <summary>Новых людей менеджер заводит уже с входом. False только у старых неподтверждённых заявок.</summary>
     public bool Approved { get; set; } = true;
     /// <summary>Хеш текущего refresh. Новый вход и выход гасят предыдущий.</summary>
     public string? RefreshTokenHash { get; set; }

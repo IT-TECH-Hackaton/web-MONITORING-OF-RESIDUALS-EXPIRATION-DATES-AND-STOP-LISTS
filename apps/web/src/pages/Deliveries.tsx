@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useSession } from "../session";
-import { Empty, ErrorText, formatExpiry, formatWhen, FreshnessPill, Panel, Qty } from "../ui";
+import { Empty, ErrorText, expiryInputValue, formatExpiry, formatWhen, FreshnessPill, Panel, Qty } from "../ui";
 
 type Line = { key: string; productId: string; name: string; unit: Unit; quantity: string; expiresAt: string };
 
@@ -166,14 +166,18 @@ export function DeliveriesPage() {
     setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
   }
 
-  const rows = (deliveries.data ?? []).filter((delivery) => delivery.acceptedAt);
-  const arrived = (deliveries.data ?? []).filter((delivery) => !delivery.acceptedAt);
+  const rows = (deliveries.data ?? []).filter((delivery) => delivery.acceptedAt || delivery.stage === "Cancelled");
+  const arrived = (deliveries.data ?? []).filter((delivery) => !delivery.acceptedAt && delivery.stage !== "Cancelled");
   const receive = useMutation({
     mutationFn: (id: string) => client.startReceiving(id),
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["deliveries"] }); },
   });
   const accept = useMutation({
     mutationFn: (id: string) => client.acceptDelivery(id),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["deliveries"] }); },
+  });
+  const cancel = useMutation({
+    mutationFn: (id: string) => client.cancelDelivery(id),
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["deliveries"] }); },
   });
   const maxBatches = Math.max(1, ...rows.map((delivery) => delivery.batches.length));
@@ -316,6 +320,7 @@ export function DeliveriesPage() {
           <div className="stack">
             {arrived.map((delivery) => {
               const stage = delivery.stage ?? "Parked";
+              const proposal = stage === "Parked" && (delivery.supplier === "Стандартная закупка" || delivery.number.startsWith("СТД-"));
               return (
                 <article key={delivery.id} className="del-step">
                   <div className="del-step-head">
@@ -324,7 +329,8 @@ export function DeliveriesPage() {
                       <strong>{delivery.number}</strong>
                       <p className="reason">{delivery.supplier ?? "Без поставщика"} · {productChips(delivery).shown.join(", ")}</p>
                     </div>
-                    {stage === "Parked" ? (
+                    {proposal ? <span className="reason">Ждёт согласования</span> : null}
+                    {stage === "Parked" && !proposal ? (
                       <button type="button" className="btn" disabled={receive.isPending} onClick={() => receive.mutate(delivery.id)}>В приёмку</button>
                     ) : null}
                     {stage === "Receiving" ? <span className="reason">Кухня принимает</span> : null}
@@ -332,6 +338,9 @@ export function DeliveriesPage() {
                       <button type="button" className="btn" disabled={accept.isPending} onClick={() => accept.mutate(delivery.id)}>Подтвердить итог</button>
                     ) : null}
                   </div>
+                  {proposal ? (
+                    <ParkedProposal delivery={delivery} onAgreed={() => receive.mutate(delivery.id)} agreeing={receive.isPending} />
+                  ) : (
                   <table className="rep-table">
                     <thead><tr><th>Продукт</th><th className="num">Заявлено</th><th>Годен до</th><th className="num">Взяли</th></tr></thead>
                     <tbody>
@@ -348,12 +357,26 @@ export function DeliveriesPage() {
                       ))}
                     </tbody>
                   </table>
+                  )}
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={cancel.isPending}
+                      onClick={() => {
+                        if (window.confirm(`Отменить поставку ${delivery.number} целиком? На склад ничего не попадёт.`)) cancel.mutate(delivery.id);
+                      }}
+                    >
+                      Отменить поставку
+                    </button>
+                  </div>
                 </article>
               );
             })}
           </div>
           {receive.error ? <ErrorText error={receive.error} /> : null}
           {accept.error ? <ErrorText error={accept.error} /> : null}
+          {cancel.error ? <ErrorText error={cancel.error} /> : null}
         </Panel>
       ) : null}
       <Panel title="Журнал">
@@ -392,7 +415,7 @@ export function DeliveriesPage() {
                           </span>
                         </div>
                       </td>
-                      <td>{nearest ? <FreshnessPill freshness={nearest.freshness} /> : "—"}</td>
+                      <td>{delivery.stage === "Cancelled" ? "Отменена" : nearest ? <FreshnessPill freshness={nearest.freshness} /> : "—"}</td>
                     </tr>
                   );
                 })}
@@ -459,6 +482,78 @@ export function DeliveryPage() {
           </table>
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function ParkedProposal({ delivery, onAgreed, agreeing }: { delivery: Delivery; onAgreed: () => void; agreeing: boolean }) {
+  const { client } = useSession();
+  const queryClient = useQueryClient();
+  const [qty, setQty] = useState<Record<string, string>>(() =>
+    Object.fromEntries(delivery.batches.map((batch) => [batch.id, String(batch.quantityInitial)])));
+  const [days, setDays] = useState<Record<string, string>>(() =>
+    Object.fromEntries(delivery.batches.map((batch) => [batch.id, expiryInputValue(batch.expiresAt)])));
+  const save = useMutation({
+    mutationFn: () => client.reviseDelivery(
+      delivery.id,
+      delivery.batches.map((batch) => ({
+        batchId: batch.id,
+        quantity: Number(qty[batch.id] ?? "0"),
+        expiresAt: days[batch.id] ? `${days[batch.id]}T12:00:00.000Z` : null,
+      })),
+    ),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["deliveries"] }); },
+  });
+
+  return (
+    <div className="stack">
+      <p className="reason">Срок поставщика уже в строке. Поправьте его, если нужно, и отдайте на кухню: там дата встанет в «Годен до», и кухня сможет её сменить.</p>
+      <div className="offer-scroll">
+        <table className="rep-table">
+          <thead><tr><th>Продукт</th><th className="num">Количество</th><th>Годен до</th><th></th></tr></thead>
+          <tbody>
+            {delivery.batches.map((batch) => (
+              <tr key={batch.id}>
+                <td>{batch.productName}</td>
+                <td className="num">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={qty[batch.id] ?? ""}
+                    aria-label={`Количество: ${batch.productName}`}
+                    onChange={(event) => setQty((current) => ({ ...current, [batch.id]: event.target.value }))}
+                  />
+                  <span className="reason"> {unitLabel(batch.unit)}</span>
+                </td>
+                <td>
+                  <input
+                    type="date"
+                    value={days[batch.id] ?? ""}
+                    aria-label={`Годен до: ${batch.productName}`}
+                    onChange={(event) => setDays((current) => ({ ...current, [batch.id]: event.target.value }))}
+                  />
+                </td>
+                <td>
+                  <button type="button" className="btn-ghost" onClick={() => setQty((current) => ({ ...current, [batch.id]: "0" }))}>Убрать</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {save.error ? <ErrorText error={save.error} /> : null}
+      <div className="btn-row">
+        <button type="button" className="btn-ghost" disabled={save.isPending} onClick={() => save.mutate()}>Сохранить правку</button>
+        <button
+          type="button"
+          className="btn"
+          disabled={agreeing || save.isPending}
+          onClick={() => { void save.mutateAsync().then(onAgreed).catch(() => undefined); }}
+        >
+          Согласовать и в приёмку
+        </button>
+      </div>
     </div>
   );
 }

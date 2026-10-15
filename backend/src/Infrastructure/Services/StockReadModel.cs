@@ -463,7 +463,8 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
                 movement.Batch.Product.Name,
                 movement.QuantityBefore!.Value,
                 movement.Quantity,
-                movement.QuantityBefore.Value - movement.Quantity))
+                movement.QuantityBefore.Value - movement.Quantity,
+                movement.Batch.Product.Unit))
             .ToList());
 
     private async Task<IReadOnlyDictionary<Guid, ProductAvailability>> AvailabilityAsync(CancellationToken cancellationToken)

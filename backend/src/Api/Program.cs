@@ -111,7 +111,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
-if (!app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment())
 {
     var jwt = app.Configuration["Jwt:Key"] ?? "";
     var inbound = app.Configuration["Inbound:Key"] ?? "";

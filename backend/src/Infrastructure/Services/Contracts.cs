@@ -78,6 +78,9 @@ public sealed record SupplyExtraLine(Guid ProductId, decimal Quantity, DateTime 
 
 public sealed record SupplyProductView(Guid Id, string Name, Unit Unit);
 
+/// <summary>Строка стандартного предложения. Срок — пример от сегодня, кухня сверит его с пачкой.</summary>
+public sealed record SupplyOfferLine(Guid Id, string Name, Unit Unit, decimal Quantity, DateTime ExpiresAt);
+
 public sealed record QrLineVerdict(string ProductName, string? CertificateNumber, bool Ok, string? Reason);
 
 public sealed record QrIntakeResult(
@@ -103,7 +106,7 @@ public sealed record OrderLineView(
     KitchenStatus KitchenStatus,
     string? KitchenNote);
 
-public sealed record OrderWriteOffView(string ProductName, decimal Before, decimal Quantity, decimal After);
+public sealed record OrderWriteOffView(string ProductName, decimal Before, decimal Quantity, decimal After, Unit Unit);
 
 public sealed record OrderView(
     Guid Id,

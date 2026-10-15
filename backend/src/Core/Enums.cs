@@ -43,21 +43,24 @@ public enum UserRole
     Supply,
 }
 
-/// <summary>Предложение ждёт, кухня принимает, менеджер подтверждает итог. Accepted — уже на складе.</summary>
+/// <summary>Предложение ждёт, кухня принимает, менеджер подтверждает итог. Accepted — уже на складе. Cancelled — всю поставку сняли до склада.</summary>
 public enum DeliveryStage
 {
     Parked,
     Receiving,
     KitchenDone,
     Accepted,
+    Cancelled,
 }
 
-/// <summary>Старая очередь тикета. Новый экран смены эти статусы не показывает.</summary>
+/// <summary>Очередь тикета и итог кухни. Waste — брак, Problem — отказ гостю.</summary>
 public enum KitchenStatus
 {
     Queued,
     Cooking,
     Ready,
+    Waste,
+    Problem,
 }
 
 /// <summary>Статья акта и автосписания: срок, брак, порча, проработка, питание персонала.</summary>

@@ -38,6 +38,17 @@ public sealed class SignalRLiveNotifier(IHubContext<LiveHub> hub) : ILiveNotifie
     public Task KitchenUpdated(CancellationToken cancellationToken) =>
         hub.Clients.Group(LiveHub.GroupName).SendAsync("kitchen.updated", new { }, cancellationToken);
 
+    public Task TableProblem(IReadOnlyCollection<Guid> waiterIds, string tableNumber, string dishes, string note, CancellationToken cancellationToken)
+    {
+        if (waiterIds.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        return hub.Clients.Users(waiterIds.Select(id => id.ToString()).ToList())
+            .SendAsync("table.problem", new { tableNumber, dishes, note }, cancellationToken);
+    }
+
     public Task ChatPosted(Guid id, string author, string role, string text, DateTime at, string channel, Guid? authorId, Guid? recipientId, CancellationToken cancellationToken)
     {
         var payload = new { id, author, role, text, at, channel, authorId, recipientId };

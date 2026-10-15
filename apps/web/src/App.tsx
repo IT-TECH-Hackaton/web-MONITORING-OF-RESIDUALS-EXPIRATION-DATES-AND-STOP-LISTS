@@ -29,7 +29,7 @@ import { KitchenIntakePage } from "./pages/KitchenIntake";
 import { KitchenPage } from "./pages/Kitchen";
 import { SupplyPage } from "./pages/Supply";
 import { OffersPage } from "./pages/Offers";
-import { OrdersPage } from "./pages/Orders";
+import { KitchenOrdersPage, OrdersPage } from "./pages/Orders";
 import { ReportsPage } from "./pages/Reports";
 import { StockPage, StockProductPage } from "./pages/Stock";
 import { TeamPage } from "./pages/Team";
@@ -48,7 +48,7 @@ const managerLinks = [
   ["/team", "Команда"],
 ];
 
-const kitchenLinks = [["/kitchen", "Смена"], ["/kitchen/intake", "Приёмка"], ["/kitchen/chat", "Чат"]];
+const kitchenLinks = [["/kitchen", "Смена"], ["/kitchen/orders", "Заказы"], ["/kitchen/intake", "Приёмка"], ["/kitchen/chat", "Чат"]];
 const supplyLinks = [["/supply", "Предложение"]];
 
 function Shell() {
@@ -145,6 +145,7 @@ export function App() {
       <Route element={<Shell />}>
         <Route index element={<DashboardPage />} />
         <Route path="kitchen" element={<KitchenPage />} />
+        <Route path="kitchen/orders" element={<KitchenOrdersPage />} />
         <Route path="kitchen/intake" element={<KitchenIntakePage />} />
         <Route path="kitchen/chat" element={<KitchenChatPage />} />
         <Route path="supply" element={<SupplyPage />} />

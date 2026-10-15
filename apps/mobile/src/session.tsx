@@ -3,6 +3,7 @@ import { createClient, type ApiClient, type Session } from "@repo/contracts";
 import { bindLive, connectLive, LiveEvents } from "@repo/realtime";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Alert } from "react-native";
 
 const sessionKey = "monitoring-session";
 const urlKey = "monitoring-api-url";
@@ -86,6 +87,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     connection.on(LiveEvents.batchExpired, refresh);
     connection.on(LiveEvents.kitchenUpdated, () => {
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    });
+    connection.on(LiveEvents.tableProblem, (payload: { tableNumber?: string; dishes?: string; note?: string }) => {
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      const table = payload.tableNumber ?? "без номера";
+      const dishes = payload.dishes ? `\n${payload.dishes}` : "";
+      const note = payload.note ? `\n${payload.note}` : "";
+      Alert.alert(`Стол ${table}`, `Кухня не отдаёт заказ.${dishes}${note}\nПодойди к гостю.`);
     });
     return bindLive(connection);
   }, [queryClient, session?.accessToken, session?.role, baseUrl]);

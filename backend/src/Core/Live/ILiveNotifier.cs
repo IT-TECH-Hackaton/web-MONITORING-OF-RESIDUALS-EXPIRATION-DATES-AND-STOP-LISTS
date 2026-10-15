@@ -28,6 +28,9 @@ public interface ILiveNotifier
 
     Task KitchenUpdated(CancellationToken cancellationToken);
 
+    /// <summary>Отказ кухни. Только официантам: номер стола, блюда и заметка, чтобы подойти к гостю.</summary>
+    Task TableProblem(IReadOnlyCollection<Guid> waiterIds, string tableNumber, string dishes, string note, CancellationToken cancellationToken);
+
     Task ChatPosted(Guid id, string author, string role, string text, DateTime at, string channel, Guid? authorId, Guid? recipientId, CancellationToken cancellationToken);
 
     /// <summary>Только перечисленным людям. Чат с поставщиком не уходит в общую группу.</summary>
@@ -51,6 +54,8 @@ public sealed class NoopLiveNotifier : ILiveNotifier
     public Task OrderDecided(string? connectionId, Guid orderId, string status, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task KitchenUpdated(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task TableProblem(IReadOnlyCollection<Guid> waiterIds, string tableNumber, string dishes, string note, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task ChatPosted(Guid id, string author, string role, string text, DateTime at, string channel, Guid? authorId, Guid? recipientId, CancellationToken cancellationToken) => Task.CompletedTask;
 

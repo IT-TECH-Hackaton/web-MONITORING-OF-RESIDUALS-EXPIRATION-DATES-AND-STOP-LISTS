@@ -14,7 +14,7 @@ function quantityOf(draft: Record<string, LineDraft>, batch: Batch) {
 
 function packDay(iso: string) {
   const day = expiryInputValue(iso);
-  return day.startsWith("2099") ? "" : day;
+  return day.startsWith("2099") || day.startsWith("2090") ? "" : day;
 }
 
 function dayOf(draft: Record<string, LineDraft>, batch: Batch) {
@@ -48,6 +48,15 @@ export function KitchenIntakePage() {
       await queryClient.invalidateQueries({ queryKey: ["intake"] });
     },
     onError: (caught) => setError(caught instanceof Error ? caught.message : "Приёмка не сохранилась"),
+  });
+  const cancel = useMutation({
+    mutationFn: (id: string) => client.cancelDelivery(id),
+    onSuccess: async () => {
+      setError(null);
+      setDraft({});
+      await queryClient.invalidateQueries({ queryKey: ["intake"] });
+    },
+    onError: (caught) => setError(caught instanceof Error ? caught.message : "Поставку не удалось отменить"),
   });
 
   function patch(batchId: string, next: LineDraft) {
@@ -84,7 +93,7 @@ export function KitchenIntakePage() {
       <header className="rep-head">
         <div>
           <h1>Приёмка</h1>
-          <p>Срок виден сразу — поправьте его по пачке. Возьмите часть или нажмите «Не берём», если позиция не подошла. На склад это попадёт после итога менеджера.</p>
+          <p>Срок поставщика уже стоит — это пример. Поправьте его по пачке. Возьмите часть или нажмите «Не берём», если позиция не подошла. На склад это попадёт после итога менеджера.</p>
         </div>
       </header>
       {intake.isLoading ? <p>Загрузка…</p> : null}
@@ -101,7 +110,7 @@ export function KitchenIntakePage() {
                 <article key={batch.id} className={skipped ? "intake-line is-skip" : "intake-line"}>
                   <div className="intake-name">
                     <strong>{batch.productName}</strong>
-                    <span className="reason">заявлено <Qty value={batch.quantityInitial} unit={batch.unit} /></span>
+                    <span className="reason">заявлено <Qty value={batch.quantityInitial} unit={batch.unit} /> · срок с поставки {packDay(batch.expiresAt) || "не указан"}</span>
                   </div>
                   <label className="intake-field">
                     Годен до
@@ -138,7 +147,17 @@ export function KitchenIntakePage() {
             })}
           </div>
           <div className="btn-row">
-            <button type="button" className="btn" disabled={confirm.isPending} onClick={() => submit(delivery)}>Подтвердить приёмку</button>
+            <button type="button" className="btn" disabled={confirm.isPending || cancel.isPending} onClick={() => submit(delivery)}>Подтвердить приёмку</button>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={confirm.isPending || cancel.isPending}
+              onClick={() => {
+                if (window.confirm(`Отменить поставку ${delivery.number} целиком? На склад ничего не попадёт.`)) cancel.mutate(delivery.id);
+              }}
+            >
+              Отменить поставку
+            </button>
           </div>
         </Panel>
       ))}

@@ -8,6 +8,7 @@ export const LiveEvents = {
   hotOffersUpdated: "hotoffers.updated",
   orderDecided: "order.decided",
   kitchenUpdated: "kitchen.updated",
+  tableProblem: "table.problem",
   shiftUpdated: "shift.updated",
   chatMessage: "chat.message",
 } as const;

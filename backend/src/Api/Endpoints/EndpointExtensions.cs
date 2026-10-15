@@ -35,7 +35,7 @@ public static class EndpointExtensions
 
             if (!user.Approved)
             {
-                return Results.Json(new ErrorResponse("Заявку ещё не подтвердил менеджер."), statusCode: StatusCodes.Status403Forbidden);
+                return Results.Json(new ErrorResponse("Учётку выдаёт менеджер."), statusCode: StatusCodes.Status403Forbidden);
             }
 
             var issued = tokens.Issue(user);
@@ -73,15 +73,6 @@ public static class EndpointExtensions
         .RequireRateLimiting("auth")
         .Ok<AuthSessionResponse>()
         .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized);
-        group.MapPost("/register", async (RegisterRequest request, StaffService staff, CancellationToken cancellationToken) =>
-        {
-            var result = await staff.RegisterAsync(request.Login, request.Password, request.DisplayName, request.Role, cancellationToken);
-            return result.Error is null ? Results.Ok(new RegisterResponse(result.Value!)) : Results.BadRequest(new ErrorResponse(result.Error!));
-        })
-        .Docs("Вход", "Заявка на доступ", "Логин, пароль, имя и роль Waiter или Kitchen. Вход откроется после подтверждения менеджера.")
-        .RequireRateLimiting("auth")
-        .Ok<RegisterResponse>()
-        .Bad();
         group.MapPost("/logout", async (ClaimsPrincipal principal, AuthService auth, CancellationToken cancellationToken) =>
         {
             await auth.ForgetRefreshAsync(UserId(principal), cancellationToken);
@@ -91,13 +82,25 @@ public static class EndpointExtensions
         .RequireAuthorization();
     }
 
-    /// <summary>Заявки подтверждает менеджер. Чат читают и пишут все три роли.</summary>
+    /// <summary>Сотрудников заводит менеджер. Чат читают и пишут роли смены.</summary>
     public static void MapStaffEndpoints(this WebApplication app)
     {
         var staff = app.MapGroup("/api/staff").RequireAuthorization("Manager");
+        staff.MapGet("/", async (StaffService people, CancellationToken cancellationToken) =>
+            Results.Ok(await people.ListAsync(cancellationToken)))
+            .Docs("Сотрудники", "Список", "Кто уже может войти.")
+            .Ok<IReadOnlyList<StaffApplicationView>>();
+        staff.MapPost("/", async (InviteStaffRequest request, StaffService people, CancellationToken cancellationToken) =>
+        {
+            var result = await people.InviteAsync(request.Login, request.Password, request.DisplayName, request.Role, cancellationToken);
+            return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Сотрудники", "Добавить", "Имя, логин, пароль и роль. Вход сразу открыт. Пароль менеджер отправляет почтой или SMS сам.")
+        .Ok<StaffApplicationView>()
+        .Bad();
         staff.MapGet("/pending", async (StaffService people, CancellationToken cancellationToken) =>
             Results.Ok(await people.PendingAsync(cancellationToken)))
-            .Docs("Сотрудники", "Заявки", "Кто попросился на кухню или в зал и ещё не подтверждён.")
+            .Docs("Сотрудники", "Старые заявки", "Если кто-то успел попроситься до отключения саморегистрации.")
             .Ok<IReadOnlyList<StaffApplicationView>>();
         staff.MapPost("/{id:guid}/approve", async (Guid id, StaffService people, CancellationToken cancellationToken) =>
         {
@@ -110,10 +113,10 @@ public static class EndpointExtensions
         staff.MapPost("/{id:guid}/reject", async (Guid id, StaffService people, CancellationToken cancellationToken) =>
         {
             var result = await people.RejectAsync(id, cancellationToken);
-            return result.Error is null ? Results.Ok(new RegisterResponse(result.Value!)) : Results.BadRequest(new ErrorResponse(result.Error!));
+            return result.Error is null ? Results.Ok(new MessageResponse(result.Value!)) : Results.BadRequest(new ErrorResponse(result.Error!));
         })
         .Docs("Сотрудники", "Отклонить заявку", "Учётная запись удаляется, войти нельзя.")
-        .Ok<RegisterResponse>()
+        .Ok<MessageResponse>()
         .Bad();
 
         var chat = app.MapGroup("/api/chat").RequireAuthorization("Chat");
@@ -263,6 +266,15 @@ public static class EndpointExtensions
         .Docs("Поставки", "Заказ приехал", "Открытые строки становятся одной поставкой «приехала». Склад не растёт. Повтор ждёт, пока первая запись закроет строки.")
         .Created<DeliveryView>()
         .Bad();
+        group.MapPut("/{id:guid}/lines", async (Guid id, ReviseDeliveryRequest request, DeliveryService deliveries, CancellationToken cancellationToken) =>
+        {
+            var lines = (request.Lines ?? []).Select(line => (line.BatchId, line.Quantity, line.ExpiresAt)).ToList();
+            var result = await deliveries.ReviseParkedAsync(id, lines, cancellationToken);
+            return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Поставки", "Поправить предложение", "Пока поставка ждёт приёмки. Ноль убирает строку, положительное число меняет заявленное. Склад не меняется.")
+        .Ok<DeliveryView>()
+        .Bad();
         group.MapPost("/{id:guid}/receive", async (Guid id, DeliveryService deliveries, CancellationToken cancellationToken) =>
         {
             var result = await deliveries.StartReceivingAsync(id, cancellationToken);
@@ -294,6 +306,14 @@ public static class EndpointExtensions
         .Docs("Поставки", "Решение кухни", "По каждой строке число от 0 до заявленного. Склад не меняется.")
         .Ok<DeliveryView>()
         .Bad();
+        intake.MapPost("/{id:guid}/cancel", async (Guid id, DeliveryService deliveries, CancellationToken cancellationToken) =>
+        {
+            var result = await deliveries.CancelAsync(id, cancellationToken);
+            return result.Error is null ? Results.Ok(result.Value) : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Поставки", "Отменить поставку", "Снимает всю поставку, пока она не на складе. И кухня, и менеджер. Склад не меняется.")
+        .Ok<DeliveryView>()
+        .Bad();
     }
 
     /// <summary>Роль «Поставка»: видит открытый заказ и отправляет его как предложение. Склада не касается.</summary>
@@ -318,6 +338,21 @@ public static class EndpointExtensions
             Results.Ok(await deliveries.CatalogAsync(cancellationToken)))
             .Docs("Поставка", "Каталог для довоза", "Имена продуктов. Остатков склада здесь нет.")
             .Ok<IReadOnlyList<SupplyProductView>>();
+        group.MapGet("/standard", async (DeliveryService deliveries, CancellationToken cancellationToken) =>
+            Results.Ok(await deliveries.StandardOfferAsync(cancellationToken)))
+            .Docs("Поставка", "Стандартная закупка", "Фиксированный список и примерный срок от сегодня. Склад не растёт, кухня поправит дату на приёмке.")
+            .Ok<IReadOnlyList<SupplyOfferLine>>();
+        group.MapPost("/proposal", async (SupplyProposalRequest request, DeliveryService deliveries, CancellationToken cancellationToken) =>
+        {
+            var lines = (request.Items ?? []).Select(item => (item.ProductId, item.Quantity, item.ExpiresAt)).ToList();
+            var result = await deliveries.SendProposalAsync(lines, cancellationToken);
+            return result.Error is null
+                ? Results.Created($"/api/deliveries/{result.Value!.Id}", result.Value)
+                : Results.BadRequest(new ErrorResponse(result.Error!));
+        })
+        .Docs("Поставка", "Отправить предложение", "Список и примерный срок уходят менеджеру. Склад не растёт. Кухня на приёмке правит дату по пачке.")
+        .Created<DeliveryView>()
+        .Bad();
         group.MapPost("/extra", async (SupplyExtraRequest request, DeliveryService deliveries, CancellationToken cancellationToken) =>
         {
             var lines = (request.Items ?? []).Select(item => new SupplyExtraLine(item.ProductId, item.Quantity, item.ExpiresAt)).ToList();
@@ -573,6 +608,24 @@ public static class EndpointExtensions
             Results.Ok(await kitchen.BoardAsync(cancellationToken)))
             .Docs("Кухня", "Использовать первым", "Активные партии, которые истекают за 72 часа или уже вскрыты. До 40 штук. Очереди заказов нет.")
             .Ok<KitchenBoard>();
+        group.MapPost("/orders/{orderId:guid}/decide", async (
+            Guid orderId,
+            KitchenDecideRequest request,
+            KitchenService kitchen,
+            ClaimsPrincipal principal,
+            CancellationToken cancellationToken) =>
+        {
+            if (!Enum.TryParse<KitchenStatus>(request.Result, true, out var result))
+            {
+                return Results.BadRequest(new ErrorResponse("Отметка: Ready, Waste или Problem."));
+            }
+
+            var decided = await kitchen.DecideAsync(orderId, result, request.Note, UserId(principal), cancellationToken);
+            return decided.Error is null ? Results.Ok(decided.Value) : Results.BadRequest(new ErrorResponse(decided.Error!));
+        })
+        .Docs("Кухня", "Итог заказа", "Ready — готово, Waste — брак, Problem — отказ. Заметка обязательна только для отказа. Склад уже списан при заказе зала, второй раз не списывается. Отказ шлёт официантам номер стола.")
+        .Ok<OrderView>()
+        .Bad();
         group.MapPost("/orders/{orderId:guid}/items/{itemId:guid}", async (
             Guid orderId,
             Guid itemId,
@@ -790,11 +843,15 @@ public sealed record WriteOffActResponse(int Count);
 /// <summary>Тело POST /api/auth/login.</summary>
 public sealed record LoginRequest(string Login, string Password);
 
-public sealed record RegisterRequest(string Login, string Password, string DisplayName, string Role);
+public sealed record InviteStaffRequest(string Login, string Password, string DisplayName, string Role);
 
-public sealed record RegisterResponse(string Message);
+public sealed record MessageResponse(string Message);
 
 public sealed record ChatPostRequest(string Text, Guid? RecipientId = null, bool ToSupplier = false);
+public sealed record SupplyProposalItemRequest(Guid ProductId, decimal Quantity, DateTime ExpiresAt);
+public sealed record SupplyProposalRequest(IReadOnlyList<SupplyProposalItemRequest>? Items);
+public sealed record ReviseDeliveryLineRequest(Guid BatchId, decimal Quantity, DateTime? ExpiresAt = null);
+public sealed record ReviseDeliveryRequest(IReadOnlyList<ReviseDeliveryLineRequest>? Lines);
 public sealed record SupplyExtraItemRequest(Guid ProductId, decimal Quantity, DateTime ExpiresAt);
 public sealed record SupplyExtraRequest(IReadOnlyList<SupplyExtraItemRequest>? Items);
 /// <summary>Тело POST /api/auth/refresh. Access-токен сюда не подходит.</summary>
@@ -824,6 +881,8 @@ public sealed record ForecastPurchaseResponse(int Count);
 /// <summary>Строка заказа поставщику. Продукт уже должен быть в каталоге.</summary>
 public sealed record PurchaseLineRequest(Guid ProductId, decimal Quantity, string? Note);
 /// <summary>Старая отметка позиции заказа. Status: Queued, Cooking, Ready. Заметка до 300 символов.</summary>
+public sealed record KitchenDecideRequest(string Result, string? Note);
+
 public sealed record KitchenDishMark(string Status, string? Note);
 /// <summary>Вскрытие партии. WriteOffQuantity новый экран не шлёт: брак идёт актом.</summary>
 public sealed record KitchenBatchMark(bool Opened, string? Note, decimal? WriteOffQuantity);

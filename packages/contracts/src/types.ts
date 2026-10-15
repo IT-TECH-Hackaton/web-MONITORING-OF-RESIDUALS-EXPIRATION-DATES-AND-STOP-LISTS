@@ -4,8 +4,8 @@ export type OrderStatus = "Accepted" | "Rejected";
 export type Freshness = "Ok" | "Expiring" | "Expired" | "Empty";
 export type MovementType = "Receipt" | "OrderWriteOff" | "ExpiryWriteOff" | "KitchenWriteOff";
 export type Role = "Manager" | "Waiter" | "Kitchen" | "Supply";
-export type DeliveryStage = "Parked" | "Receiving" | "KitchenDone" | "Accepted";
-export type KitchenStatus = "Queued" | "Cooking" | "Ready";
+export type DeliveryStage = "Parked" | "Receiving" | "KitchenDone" | "Accepted" | "Cancelled";
+export type KitchenStatus = "Queued" | "Cooking" | "Ready" | "Waste" | "Problem";
 
 export type Session = {
   accessToken: string;
@@ -41,7 +41,7 @@ export type Order = {
   items: OrderLine[];
   shortages: Shortage[];
   tableNumber: string | null;
-  writeOffs?: { productName: string; before: number; quantity: number; after: number }[];
+  writeOffs?: { productName: string; before: number; quantity: number; after: number; unit?: Unit }[];
 };
 
 export type Batch = {

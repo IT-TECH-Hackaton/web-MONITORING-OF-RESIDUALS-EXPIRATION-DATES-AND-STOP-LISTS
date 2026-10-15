@@ -1,4 +1,4 @@
-import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Session, type ShiftCurrent, type StaffApplication, type ChatMessage, type ShiftHistoryEntry, type ShiftJournalRow, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
+import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Role, type Session, type ShiftCurrent, type StaffApplication, type ChatMessage, type ShiftHistoryEntry, type ShiftJournalRow, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
 
 export type TokenStore = {
   getAccess: () => string | null;
@@ -87,8 +87,9 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
       }
       options.tokens.setSession(null);
     },
-    register: (input: { login: string; password: string; displayName: string; role: "Waiter" | "Kitchen" }) =>
-      request("/api/auth/register", { method: "POST", body: JSON.stringify(input) }).then((response) => json<{ message: string }>(response)),
+    staff: () => request("/api/staff").then((response) => json<StaffApplication[]>(response)),
+    inviteStaff: (input: { login: string; password: string; displayName: string; role: Role }) =>
+      request("/api/staff", { method: "POST", body: JSON.stringify(input) }).then((response) => json<StaffApplication>(response)),
     pendingStaff: () => request("/api/staff/pending").then((response) => json<StaffApplication[]>(response)),
     approveStaff: (id: string) => request(`/api/staff/${id}/approve`, { method: "POST" }).then((response) => json<StaffApplication>(response)),
     rejectStaff: (id: string) => request(`/api/staff/${id}/reject`, { method: "POST" }).then((response) => json<{ message: string }>(response)),
@@ -97,6 +98,11 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     postChat: (text: string, recipientId?: string | null, toSupplier = false) =>
       request("/api/chat", { method: "POST", body: JSON.stringify({ text, recipientId: recipientId ?? null, toSupplier }) }).then((response) => json<ChatMessage>(response)),
     supplyCatalog: () => request("/api/supply/catalog").then((response) => json<{ id: string; name: string; unit: Unit }[]>(response)),
+    supplyStandard: () => request("/api/supply/standard").then((response) => json<{ id: string; name: string; unit: Unit; quantity: number; expiresAt: string }[]>(response)),
+    sendSupplyProposal: (items: { productId: string; quantity: number; expiresAt: string }[]) =>
+      request("/api/supply/proposal", { method: "POST", body: JSON.stringify({ items }) }).then((response) => json<Delivery>(response)),
+    reviseDelivery: (id: string, lines: { batchId: string; quantity: number; expiresAt?: string | null }[]) =>
+      request(`/api/deliveries/${id}/lines`, { method: "PUT", body: JSON.stringify({ lines }) }).then((response) => json<Delivery>(response)),
     sendSupplyExtra: (items: { productId: string; quantity: number; expiresAt: string }[]) =>
       request("/api/supply/extra", { method: "POST", body: JSON.stringify({ items }) }).then((response) => json<Delivery>(response)),
     products: () => request("/api/products").then((response) => json<Product[]>(response)),
@@ -117,6 +123,7 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     acceptDelivery: (id: string) => request(`/api/deliveries/${id}/accept`, { method: "POST" }).then((response) => json<Delivery>(response)),
     sendOrderAsDelivery: () => request("/api/deliveries/from-order", { method: "POST" }).then((response) => json<Delivery>(response)),
     startReceiving: (id: string) => request(`/api/deliveries/${id}/receive`, { method: "POST" }).then((response) => json<Delivery>(response)),
+    cancelDelivery: (id: string) => request(`/api/deliveries/${id}/cancel`, { method: "POST" }).then((response) => json<Delivery>(response)),
     intakeDeliveries: () => request("/api/deliveries/intake").then((response) => json<Delivery[]>(response)),
     confirmIntake: (id: string, lines: { batchId: string; quantity: number; expiresAt?: string | null; note?: string | null }[]) =>
       request(`/api/deliveries/${id}/intake`, { method: "POST", body: JSON.stringify({ lines }) }).then((response) => json<Delivery>(response)),
@@ -185,6 +192,11 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     shiftJournal: () => request("/api/analytics/shifts").then((response) => json<ShiftJournalRow[]>(response)),
     reports: () => request("/api/reports").then((response) => json<MoneyReport>(response)),
     kitchen: () => request("/api/kitchen").then((response) => json<KitchenBoard>(response)),
+    decideOrder: (orderId: string, result: "Ready" | "Waste" | "Problem", note?: string) =>
+      request(`/api/kitchen/orders/${orderId}/decide`, {
+        method: "POST",
+        body: JSON.stringify({ result, note: note ?? null }),
+      }).then((response) => json<Order>(response)),
     markDish: (orderId: string, itemId: string, status: KitchenStatus, note: string) =>
       request(`/api/kitchen/orders/${orderId}/items/${itemId}`, {
         method: "POST",

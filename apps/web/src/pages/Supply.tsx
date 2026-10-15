@@ -1,6 +1,6 @@
 import { unitLabel, type PurchaseSource, type Unit } from "@repo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChatBox } from "../chat";
 import { useSession } from "../session";
 import { Empty, ErrorText, Panel, Qty } from "../ui";
@@ -18,20 +18,48 @@ function plusDays(days: number) {
 }
 
 type ExtraLine = { key: string; productId: string; quantity: string; expiresAt: string };
-type SupplyTab = "order" | "extra" | "chat";
+type OfferLine = { productId: string; name: string; unit: Unit; quantity: string; expiresAt: string };
+type SupplyTab = "standard" | "order" | "extra" | "chat";
 
 const emptyExtra = (): ExtraLine => ({ key: crypto.randomUUID(), productId: "", quantity: "", expiresAt: plusDays(7) });
 
 export function SupplyPage() {
   const { client } = useSession();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<SupplyTab>("order");
+  const [tab, setTab] = useState<SupplyTab>("standard");
   const order = useQuery({ queryKey: ["supply-order"], queryFn: () => client.supplyOrder(), refetchInterval: 5000 });
+  const standard = useQuery({ queryKey: ["supply-standard"], queryFn: () => client.supplyStandard() });
   const catalog = useQuery({ queryKey: ["supply-catalog"], queryFn: () => client.supplyCatalog(), enabled: tab === "extra" });
+  const [offer, setOffer] = useState<OfferLine[] | null>(null);
+  const [proposalSent, setProposalSent] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const [extraSent, setExtraSent] = useState<string | null>(null);
   const [extraError, setExtraError] = useState<string | null>(null);
   const [lines, setLines] = useState<ExtraLine[]>([emptyExtra()]);
+  useEffect(() => {
+    if (!standard.data || offer) return;
+    setOffer(standard.data.map((line) => ({
+      productId: line.id,
+      name: line.name,
+      unit: line.unit,
+      quantity: String(line.quantity),
+      expiresAt: line.expiresAt.slice(0, 10),
+    })));
+  }, [standard.data, offer]);
+  const proposal = useMutation({
+    mutationFn: () => client.sendSupplyProposal(
+      (offer ?? [])
+        .filter((line) => Number(line.quantity) > 0)
+        .map((line) => ({
+          productId: line.productId,
+          quantity: Number(line.quantity),
+          expiresAt: `${line.expiresAt}T12:00:00.000Z`,
+        })),
+    ),
+    onSuccess: async (delivery) => {
+      setProposalSent(`Предложение ${delivery.number} ушло менеджеру. На складе его ещё нет.`);
+    },
+  });
   const send = useMutation({
     mutationFn: () => client.sendSupply(),
     onSuccess: async (delivery) => {
@@ -83,14 +111,63 @@ export function SupplyPage() {
       <header className="rep-head">
         <div>
           <h1>Поставка</h1>
-          <p>Заказ заведения, то что привезли сами, и чат. Ни то ни другое ещё не склад.</p>
+          <p>Стандартный список уходит менеджеру. Он правит количества и отдаёт в приёмку. Мелочёвка — отдельно. Склад от этого не растёт.</p>
         </div>
       </header>
       <div className="chat-tabs">
+        <button type="button" className={tab === "standard" ? "btn-ghost is-on" : "btn-ghost"} onClick={() => setTab("standard")}>Стандарт</button>
         <button type="button" className={tab === "order" ? "btn-ghost is-on" : "btn-ghost"} onClick={() => setTab("order")}>Заказ</button>
-        <button type="button" className={tab === "extra" ? "btn-ghost is-on" : "btn-ghost"} onClick={() => setTab("extra")}>Довезли</button>
+        <button type="button" className={tab === "extra" ? "btn-ghost is-on" : "btn-ghost"} onClick={() => setTab("extra")}>Мелочёвка</button>
         <button type="button" className={tab === "chat" ? "btn-ghost is-on" : "btn-ghost"} onClick={() => setTab("chat")}>Чат</button>
       </div>
+      {tab === "standard" ? (
+        <Panel title="Стандартная закупка">
+          <p className="reason">Обычный набор заведения. «Годен до» — пример от сегодняшнего дня. Ноль — не предлагать. На приёмке кухня поправит дату по пачке.</p>
+          {standard.isLoading ? <p>Собираем список…</p> : null}
+          {standard.error ? <ErrorText error={standard.error} /> : null}
+          {offer && offer.length > 0 ? (
+            <div className="offer-scroll">
+              <table>
+                <thead><tr><th>Продукт</th><th>Количество</th><th>Годен до</th></tr></thead>
+                <tbody>
+                  {offer.map((line) => (
+                    <tr key={line.productId}>
+                      <td>{line.name}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={line.quantity}
+                          aria-label={`Количество: ${line.name}`}
+                          onChange={(event) => setOffer((current) => current?.map((item) => item.productId === line.productId ? { ...item, quantity: event.target.value } : item) ?? current)}
+                        />
+                        <span className="reason"> {unitLabel(line.unit)}</span>
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          value={line.expiresAt}
+                          aria-label={`Годен до: ${line.name}`}
+                          onChange={(event) => setOffer((current) => current?.map((item) => item.productId === line.productId ? { ...item, expiresAt: event.target.value } : item) ?? current)}
+                          required
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {proposalSent ? <p className="hint">{proposalSent}</p> : null}
+          {proposal.error ? <ErrorText error={proposal.error} /> : null}
+          <div className="btn-row">
+            <button type="button" className="btn" disabled={proposal.isPending || !offer?.some((line) => Number(line.quantity) > 0 && line.expiresAt)} onClick={() => proposal.mutate()}>
+              {proposal.isPending ? "Отправляем…" : "Отправить менеджеру"}
+            </button>
+          </div>
+        </Panel>
+      ) : null}
       {tab === "order" ? (
         <Panel title="Заказ заведения">
           <p className="reason">Открытые строки. Сформировать и отправить — машина «приехала», склад не растёт.</p>
@@ -122,8 +199,8 @@ export function SupplyPage() {
         </Panel>
       ) : null}
       {tab === "extra" ? (
-        <Panel title="Довезли сами">
-          <p className="reason">Продукты сверх заказа. Срок — с пачки. Уходит отдельной машиной «приехала» и открытый заказ не закрывает.</p>
+        <Panel title="Мелочёвка">
+          <p className="reason">То, чего нет в стандарте. Срок — с пачки. Уходит отдельной машиной и стандартный список не закрывает.</p>
           {catalog.isLoading ? <p>Загрузка каталога…</p> : null}
           {catalog.error ? <ErrorText error={catalog.error} /> : null}
           <div className="stack">

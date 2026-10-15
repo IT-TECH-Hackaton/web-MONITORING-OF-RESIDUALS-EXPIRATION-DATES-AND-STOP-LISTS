@@ -776,6 +776,10 @@ tr.is-skip td { color: var(--ink-soft); }
   .intake-name, .intake-why { grid-column: 1 / -1; }
 }
 .pending-glow { border-color: var(--accent); }
+.offer-scroll { max-height: 560px; overflow: auto; }
+.offer-scroll input { width: 120px; }
+.order-hit.is-open td { background: var(--paper); }
+.writeoff-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
 .live-notices {
   position: fixed;
   top: 16px;

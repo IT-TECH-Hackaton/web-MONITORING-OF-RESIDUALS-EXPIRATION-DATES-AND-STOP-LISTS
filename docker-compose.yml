@@ -14,7 +14,6 @@ services:
       retries: 20
 
   api:
-    image: rvchk/monitoring-api:latest
     build:
       context: ./backend
     environment:
@@ -28,7 +27,6 @@ services:
         condition: service_healthy
 
   web:
-    image: rvchk/monitoring-web:latest
     build:
       context: .
       dockerfile: apps/web/Dockerfile

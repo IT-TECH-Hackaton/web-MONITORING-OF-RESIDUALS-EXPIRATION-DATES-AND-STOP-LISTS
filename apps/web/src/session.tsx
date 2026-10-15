@@ -81,6 +81,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     };
     connection.on(LiveEvents.kitchenUpdated, refresh);
+    connection.on(LiveEvents.tableProblem, (payload: { tableNumber?: string; dishes?: string; note?: string }) => {
+      refresh();
+      if (memory.session?.role !== "Waiter") return;
+      const table = payload.tableNumber ?? "без номера";
+      const dishes = payload.dishes ? ` ${payload.dishes}.` : "";
+      const note = payload.note ? ` ${payload.note}.` : "";
+      pushNotice(`Стол ${table}: кухня не отдаёт заказ.${dishes}${note} Подойди к гостю.`);
+    });
     connection.on(LiveEvents.stockChanged, (payload: { depleted?: string[] }) => {
       refresh();
       for (const name of payload.depleted ?? []) pushNotice(`${name} закончился`);

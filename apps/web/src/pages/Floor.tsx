@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useCart } from "../cart";
 import { ChatBox } from "../chat";
+import { LiveNotices } from "../notices";
 import { useSession } from "../session";
 import { ThemeToggle } from "../theme";
 import { Empty, isLow } from "../ui";
@@ -199,6 +200,7 @@ export function FloorShell() {
           <button type="button" className="text-btn" onClick={() => { client.logout(); navigate("/login"); }}>Выйти</button>
         </div>
       </header>
+      <LiveNotices />
       <main className="floor-body">
         <Outlet />
       </main>

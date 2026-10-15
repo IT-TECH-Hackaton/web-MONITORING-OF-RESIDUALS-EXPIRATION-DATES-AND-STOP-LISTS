@@ -11,41 +11,52 @@ public sealed record StaffApplicationView(Guid Id, string Login, string DisplayN
 
 public sealed record ChatMessageView(Guid Id, string Author, string Role, string Text, DateTime At, string Channel, Guid? AuthorId = null, Guid? RecipientId = null, string? RecipientName = null);
 
-/// <summary>Заявки на вход и общий чат. Склад не трогает.</summary>
+/// <summary>Сотрудников заводит менеджер. Чат общий. Склад не трогает.</summary>
 public sealed class StaffService(AppDbContext db, IClock clock, ILiveNotifier notifier)
 {
-    /// <summary>Заявка. Роль только официант или кухня. Пока менеджер не подтвердит, вход закрыт.</summary>
-    public async Task<ServiceResult<string>> RegisterAsync(string login, string password, string displayName, string role, CancellationToken cancellationToken)
+    /// <summary>Новая учётка сразу с входом. Пароль в ответе не возвращаем — менеджер отправляет его сам.</summary>
+    public async Task<ServiceResult<StaffApplicationView>> InviteAsync(string login, string password, string displayName, string role, CancellationToken cancellationToken)
     {
-        login = login.Trim();
-        displayName = displayName.Trim();
+        login = (login ?? "").Trim();
+        displayName = (displayName ?? "").Trim();
+        password ??= "";
         if (login.Length is < 3 or > 64 || password.Length is < 6 or > 128 || displayName.Length is < 2 or > 80)
         {
-            return ServiceResult<string>.Bad("Логин от 3 символов, пароль от 6, имя от 2.");
+            return ServiceResult<StaffApplicationView>.Bad("Логин от 3 символов, пароль от 6, имя от 2.");
         }
 
-        if (!Enum.TryParse<UserRole>(role, true, out var parsed) || parsed is not (UserRole.Waiter or UserRole.Kitchen))
+        if (!Enum.TryParse<UserRole>(role, true, out var parsed))
         {
-            return ServiceResult<string>.Bad("Роль заявки: Waiter или Kitchen.");
+            return ServiceResult<StaffApplicationView>.Bad("Роль: официант, кухня, менеджер или поставка.");
         }
 
         if (await db.Users.AnyAsync(user => user.Login == login, cancellationToken))
         {
-            return ServiceResult<string>.Bad("Такой логин уже есть.");
+            return ServiceResult<StaffApplicationView>.Bad("Такой логин уже есть.");
         }
 
-        db.Users.Add(new UserAccount
+        var user = new UserAccount
         {
             Id = Guid.NewGuid(),
             Login = login,
             DisplayName = displayName,
             PasswordHash = PasswordHasher.Hash(password),
             Role = parsed,
-            Approved = false,
-        });
+            Approved = true,
+        };
+        db.Users.Add(user);
         await db.SaveChangesAsync(cancellationToken);
-        return ServiceResult<string>.Ok("Заявка отправлена. Войти можно после подтверждения менеджера.");
+        return ServiceResult<StaffApplicationView>.Ok(new StaffApplicationView(user.Id, user.Login, user.DisplayName, user.Role.ToString()));
     }
+
+    public async Task<IReadOnlyList<StaffApplicationView>> ListAsync(CancellationToken cancellationToken) =>
+        await db.Users.AsNoTracking()
+            .Where(user => user.Approved)
+            .OrderBy(user => user.Role)
+            .ThenBy(user => user.DisplayName)
+            .ThenBy(user => user.Login)
+            .Select(user => new StaffApplicationView(user.Id, user.Login, user.DisplayName, user.Role.ToString()))
+            .ToListAsync(cancellationToken);
 
     public async Task<IReadOnlyList<StaffApplicationView>> PendingAsync(CancellationToken cancellationToken) =>
         await db.Users.AsNoTracking()
