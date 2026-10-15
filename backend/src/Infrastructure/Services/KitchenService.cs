@@ -20,7 +20,7 @@ public sealed record KitchenBatchCard(
 public sealed record KitchenBoard(IReadOnlyList<KitchenBatchCard> Batches);
 
 /// <summary>Короткий срок, вскрытие партии и старые отметки тикета.</summary>
-public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier notifier, StockBroadcaster broadcaster)
+public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier notifier, StockBroadcaster broadcaster, OrderService orders)
 {
     /// <summary>Активные партии, которые истекают за 72 часа или уже вскрыты. До 40 штук.</summary>
     public async Task<KitchenBoard> BoardAsync(CancellationToken cancellationToken)
@@ -55,7 +55,7 @@ public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier 
         string? note,
         CancellationToken cancellationToken)
     {
-        var item = await db.OrderItems.Include(line => line.Order).FirstOrDefaultAsync(
+        var item = await db.OrderItems.Include(line => line.Order).Include(line => line.Dish).FirstOrDefaultAsync(
             line => line.Id == itemId && line.OrderId == orderId,
             cancellationToken);
         if (item is null || item.Order.Status != OrderStatus.Accepted)
@@ -68,16 +68,61 @@ public sealed class KitchenService(AppDbContext db, IClock clock, ILiveNotifier 
             return ServiceResult<OrderView>.Bad("Заметка кухни длиннее 300 символов.");
         }
 
+        if (status == KitchenStatus.Spoiled)
+        {
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                return ServiceResult<OrderView>.Bad("Напишите, что сказать официанту.");
+            }
+
+            if (item.KitchenStatus == KitchenStatus.Spoiled)
+            {
+                return ServiceResult<OrderView>.Bad("Это блюдо уже отмечено испорченным.");
+            }
+
+            item.KitchenStatus = KitchenStatus.Spoiled;
+            item.KitchenNote = note.Trim();
+            await db.SaveChangesAsync(cancellationToken);
+            var table = string.IsNullOrWhiteSpace(item.Order.TableNumber) ? "без стола" : $"стол {item.Order.TableNumber}";
+            await notifier.OrderSpoiled(item.Order.CreatedBy, table, item.Dish?.Name ?? "Блюдо", item.KitchenNote, cancellationToken);
+            await notifier.KitchenUpdated(cancellationToken);
+            return ServiceResult<OrderView>.Ok(await LoadOrderAsync(orderId, cancellationToken));
+        }
+
+        if (status == KitchenStatus.Ready && item.KitchenStatus == KitchenStatus.Queued)
+        {
+            return ServiceResult<OrderView>.Bad("Сначала возьмите блюдо в работу.");
+        }
+
+        if (status == KitchenStatus.Cooking && item.KitchenStatus == KitchenStatus.Queued)
+        {
+            var cooked = await orders.CookItemAsync(orderId, itemId, cancellationToken);
+            if (cooked.Error is not null)
+            {
+                return ServiceResult<OrderView>.Bad(cooked.Error);
+            }
+
+            item = await db.OrderItems.Include(line => line.Order).FirstAsync(
+                line => line.Id == itemId && line.OrderId == orderId,
+                cancellationToken);
+        }
+
         item.KitchenStatus = status;
         item.KitchenNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
         await db.SaveChangesAsync(cancellationToken);
         await notifier.KitchenUpdated(cancellationToken);
+        return ServiceResult<OrderView>.Ok(await LoadOrderAsync(orderId, cancellationToken));
+    }
+
+    private async Task<OrderView> LoadOrderAsync(Guid orderId, CancellationToken cancellationToken)
+    {
         var order = await db.Orders.AsNoTracking()
             .Include(row => row.CreatedByUser)
-            .Include(row => row.Items).ThenInclude(line => line.Dish)
+            .Include(row => row.Items).ThenInclude(line => line.Dish).ThenInclude(dish => dish.Ingredients).ThenInclude(ingredient => ingredient.Product)
             .Include(row => row.Shortages).ThenInclude(shortage => shortage.Product)
+            .Include(row => row.Movements).ThenInclude(movement => movement.Batch).ThenInclude(batch => batch.Product)
             .FirstAsync(row => row.Id == orderId, cancellationToken);
-        return ServiceResult<OrderView>.Ok(StockReadModel.MapOrder(order));
+        return StockReadModel.MapOrder(order);
     }
 
     /// <summary>Вскрывает партию и пишет заметку. Количество списания больше нуля уменьшает остаток партии.</summary>

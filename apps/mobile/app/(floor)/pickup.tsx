@@ -9,6 +9,7 @@ const label: Record<KitchenStatus, string> = {
   Queued: "в очереди",
   Cooking: "готовится",
   Ready: "готово",
+  Spoiled: "испорчено",
 };
 
 export default function PickupScreen() {

@@ -63,6 +63,17 @@ public sealed record BatchView(
     decimal? AcceptedQuantity = null,
     string? KitchenNote = null);
 
+/// <summary>Строка истории продукта: когда, куда ушло и сколько.</summary>
+public sealed record ProductUseView(
+    Guid Id,
+    DateTime At,
+    string Kind,
+    string Place,
+    decimal Quantity,
+    Unit Unit,
+    decimal? Before = null,
+    decimal? After = null);
+
 public sealed record DeliveryView(
     Guid Id,
     string Number,
@@ -95,13 +106,16 @@ public sealed record ShortageView(
     decimal Available,
     decimal Deficit);
 
+public sealed record RecipeNeedView(string ProductName, decimal Quantity, Unit Unit);
+
 public sealed record OrderLineView(
     Guid Id,
     Guid DishId,
     string DishName,
     int Portions,
     KitchenStatus KitchenStatus,
-    string? KitchenNote);
+    string? KitchenNote,
+    IReadOnlyList<RecipeNeedView>? Needs = null);
 
 public sealed record OrderWriteOffView(string ProductName, decimal Before, decimal Quantity, decimal After);
 

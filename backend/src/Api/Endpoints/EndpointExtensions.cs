@@ -395,6 +395,10 @@ public static class EndpointExtensions
             .Docs("Склад", "Под списание", "Просроченные партии, которые ещё не списаны человеком. В готовку не входят.")
             .RequireAuthorization("Kitchen")
             .Ok<IReadOnlyList<BatchView>>();
+        group.MapGet("/stock/{productId:guid}/uses", async (Guid productId, StockReadModel stock, CancellationToken cancellationToken) =>
+            Results.Ok(await stock.UsesAsync(productId, cancellationToken)))
+            .Docs("Склад", "Куда ушёл продукт", "Приход, заказ со столом и актом списания. Новые сверху.")
+            .Ok<IReadOnlyList<ProductUseView>>();
         group.MapGet("/stock/{productId:guid}/batches", async (Guid productId, StockReadModel stock, CancellationToken cancellationToken) =>
             Results.Ok(await stock.BatchesAsync(productId, cancellationToken)))
             .Docs("Склад", "Партии продукта", "Вход: productId. Партии от ближайшего срока, включая уже списанные.")
@@ -582,7 +586,7 @@ public static class EndpointExtensions
         {
             if (!Enum.TryParse<KitchenStatus>(request.Status, true, out var status))
             {
-                return Results.BadRequest(new ErrorResponse("Статус: Queued, Cooking или Ready."));
+                return Results.BadRequest(new ErrorResponse("Статус: Queued, Cooking, Ready или Spoiled."));
             }
 
             var result = await kitchen.MarkDishAsync(orderId, itemId, status, request.Note, cancellationToken);

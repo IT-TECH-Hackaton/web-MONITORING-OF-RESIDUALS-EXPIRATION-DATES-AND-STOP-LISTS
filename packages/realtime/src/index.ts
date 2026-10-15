@@ -7,6 +7,7 @@ export const LiveEvents = {
   stopListUpdated: "stoplist.updated",
   hotOffersUpdated: "hotoffers.updated",
   orderDecided: "order.decided",
+  orderSpoiled: "order.spoiled",
   kitchenUpdated: "kitchen.updated",
   shiftUpdated: "shift.updated",
   chatMessage: "chat.message",

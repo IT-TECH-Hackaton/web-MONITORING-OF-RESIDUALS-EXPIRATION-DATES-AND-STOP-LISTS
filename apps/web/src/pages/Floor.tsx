@@ -405,6 +405,9 @@ export function FloorOrderPage() {
   const [why, setWhy] = useState<StopEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [lastOrderId, setLastOrderId] = useState<string | null>(null);
+  const kitchenOrders = useQuery({ queryKey: ["orders"], queryFn: () => client.orders(), enabled: Boolean(lastOrderId), refetchInterval: 4000 });
+  const lastOrder = kitchenOrders.data?.find((order) => order.id === lastOrderId);
   const [pending, setPending] = useState(false);
   const tableOk = cart.table.trim().length > 0;
   const availability = useMemo(() => new Map((stop.data ?? []).map((entry) => [entry.dishId, entry])), [stop.data]);
@@ -421,15 +424,16 @@ export function FloorOrderPage() {
     setDone(null);
     try {
       if (dishes.length > 0) {
-        await client.placeOrder({
+        const placed = await client.placeOrder({
           id: newId(),
           tableNumber: cart.table.trim(),
           items: dishes.map((line) => ({ dishId: line.dishId, portions: line.portions })),
         });
+        setLastOrderId(placed.id);
       }
       const number = cart.table.trim();
       cart.clear();
-      setDone(`Касса: стол ${number}, заказ на кухню.`);
+      setDone(`Стол ${number}: кухня получила заказ.`);
       await queryClient.invalidateQueries({ queryKey: ["stop-list"] });
       await queryClient.invalidateQueries({ queryKey: ["priority"] });
     } catch (caught) {
@@ -504,6 +508,16 @@ export function FloorOrderPage() {
       {blocked ? <p className="error-text">В заказе стоп или порций больше, чем есть. Склад при отказе не трогаем.</p> : null}
       {error ? <p className="error-text">{error}</p> : null}
       {done ? <p className="hint">{done}</p> : null}
+      {lastOrder ? (
+        <ul className="del-lines">
+          {lastOrder.items.map((item) => (
+            <li key={item.id}>
+              {item.dishName}: {item.kitchenStatus === "Cooking" ? "готовится" : item.kitchenStatus === "Ready" ? "готово" : item.kitchenStatus === "Spoiled" ? "испорчено, скажите гостю" : "в очереди"}
+              {item.kitchenStatus === "Spoiled" && item.kitchenNote ? ` — ${item.kitchenNote}` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <button
         className="btn floor-submit"
         disabled={pending || blocked || cart.lines.length === 0 || !tableOk}

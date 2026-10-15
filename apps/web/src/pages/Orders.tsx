@@ -27,7 +27,7 @@ export function OrdersPage() {
                   <td>{order.tableNumber ?? "—"}</td>
                   <td>{order.createdByLogin}</td>
                   <td>
-                    {order.items.map((item) => `${item.dishName} × ${item.portions}`).join(", ")}
+                    {order.items.map((item) => `${item.dishName} × ${item.portions} (${item.kitchenStatus === "Cooking" ? "готовится" : item.kitchenStatus === "Ready" ? "готово" : item.kitchenStatus === "Spoiled" ? `испорчено: ${item.kitchenNote ?? ""}` : "в очереди"})`).join(", ")}
                     {order.writeOffs && order.writeOffs.length > 0 ? (
                       <p className="reason">{order.writeOffs.map((line) => `${line.productName} ${line.before} − ${line.quantity} = ${line.after}`).join("; ")}</p>
                     ) : null}

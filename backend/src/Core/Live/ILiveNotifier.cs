@@ -26,6 +26,9 @@ public interface ILiveNotifier
 
     Task OrderDecided(string? connectionId, Guid orderId, string status, CancellationToken cancellationToken);
 
+    /// <summary>Кухня не смогла отдать блюдо. Текст уходит официанту, который пробил заказ.</summary>
+    Task OrderSpoiled(Guid waiterId, string table, string dish, string text, CancellationToken cancellationToken);
+
     Task KitchenUpdated(CancellationToken cancellationToken);
 
     Task ChatPosted(Guid id, string author, string role, string text, DateTime at, string channel, Guid? authorId, Guid? recipientId, CancellationToken cancellationToken);
@@ -49,6 +52,8 @@ public sealed class NoopLiveNotifier : ILiveNotifier
     public Task HotOffersUpdated(IReadOnlyList<HotOffer> offers, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task OrderDecided(string? connectionId, Guid orderId, string status, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task OrderSpoiled(Guid waiterId, string table, string dish, string text, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task KitchenUpdated(CancellationToken cancellationToken) => Task.CompletedTask;
 

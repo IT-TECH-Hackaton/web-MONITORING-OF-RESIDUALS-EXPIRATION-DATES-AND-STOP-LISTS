@@ -15,7 +15,7 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
     /// Вход: id, автор, строки, стол. Официант без стола — ошибка, склад не трогаем.
     /// Повтор того же id возвращает уже записанный заказ.
     /// Стоп или порций больше лимита — отказ 409, партии не меняются.
-    /// Иначе списывает партии раньше срока и уменьшает prepPortions. Ноль порций ставит стоп OutOfProduct.
+    /// Склад в этот момент не списывается: кухня списывает строку, когда берёт её в работу. Заготовка уменьшается сразу.
     /// </summary>
     public async Task<OrderPlacement> PlaceAsync(PlaceOrderCommand command, CancellationToken cancellationToken)
     {
@@ -182,30 +182,6 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
             return OrderPlacement.Rejected(rejected!, true);
         }
 
-        var byId = locked.ToDictionary(batch => batch.Id);
-        foreach (var allocation in outcome.Lines)
-        {
-            var batch = byId[allocation.BatchId];
-            var before = batch.QuantityRemaining;
-            batch.QuantityRemaining -= allocation.Quantity;
-            if (batch.QuantityRemaining <= 0)
-            {
-                batch.QuantityRemaining = 0;
-                batch.Status = BatchStatus.Depleted;
-            }
-
-            db.StockMovements.Add(new StockMovement
-            {
-                Id = Guid.NewGuid(),
-                BatchId = batch.Id,
-                OrderId = order.Id,
-                Type = MovementType.OrderWriteOff,
-                Quantity = allocation.Quantity,
-                QuantityBefore = before,
-                CreatedAt = now,
-            });
-        }
-
         order.Status = OrderStatus.Accepted;
         await shift.ApplyOrderPortionsAsync(portions.Select(line => (line.DishId, line.Portions)).ToList(), cancellationToken);
         db.Orders.Add(order);
@@ -230,10 +206,93 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
         }
 
         await broadcaster.PublishAsync(
-            new StockChange(productIds, [], [], order.Id, nameof(OrderStatus.Accepted), command.ConnectionId),
+            new StockChange([], [], [], order.Id, nameof(OrderStatus.Accepted), command.ConnectionId),
             cancellationToken);
         var accepted = await readModel.OrderAsync(order.Id, cancellationToken);
         return OrderPlacement.Accepted(accepted!, true);
+    }
+
+    /// <summary>Списывает техкарту одной строки заказа. Повтор, если строка уже не в очереди, склад не трогает.</summary>
+    public async Task<ServiceResult<bool>> CookItemAsync(Guid orderId, Guid itemId, CancellationToken cancellationToken)
+    {
+        var item = await db.OrderItems
+            .Include(line => line.Order)
+            .Include(line => line.Dish).ThenInclude(dish => dish.Ingredients)
+            .FirstOrDefaultAsync(line => line.Id == itemId && line.OrderId == orderId, cancellationToken);
+        if (item is null || item.Order.Status != OrderStatus.Accepted)
+        {
+            return ServiceResult<bool>.Bad("Блюдо в принятом заказе не найдено.");
+        }
+
+        if (item.KitchenStatus != KitchenStatus.Queued)
+        {
+            return ServiceResult<bool>.Ok(true);
+        }
+
+        if (item.Dish.Ingredients.Count == 0)
+        {
+            return ServiceResult<bool>.Bad($"У блюда «{item.Dish.Name}» нет рецепта.");
+        }
+
+        var requirements = item.Dish.Ingredients
+            .Select(line => new ProductRequirement(line.ProductId, line.Quantity * item.Portions))
+            .ToList();
+        var productIds = requirements.Select(line => line.ProductId).Distinct().OrderBy(id => id).ToList();
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        foreach (var productId in productIds)
+        {
+            await LockProductBatchesAsync(productId, cancellationToken);
+        }
+
+        var locked = await db.Batches
+            .Where(batch => productIds.Contains(batch.ProductId) && batch.Status == BatchStatus.Active)
+            .ToListAsync(cancellationToken);
+        var now = clock.UtcNow;
+        var outcome = FefoAllocator.TryAllocate(
+            requirements,
+            locked.Select(batch => new BatchSlice(batch.Id, batch.ProductId, batch.QuantityRemaining, batch.ExpiresAt, batch.ReceivedAt, batch.Status)).ToList(),
+            now);
+        if (!outcome.Success)
+        {
+            var names = await db.Products.Where(product => productIds.Contains(product.Id))
+                .ToDictionaryAsync(product => product.Id, product => product.Name, cancellationToken);
+            var reason = string.Join("; ", outcome.Shortages.Select(shortage =>
+                $"{names.GetValueOrDefault(shortage.ProductId, "Продукт")}: нужно {Format(shortage.Required)}, доступно {Format(shortage.Available)}"));
+            item.KitchenNote = reason.Length > 300 ? reason[..300] : reason;
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return ServiceResult<bool>.Bad(reason);
+        }
+
+        var byId = locked.ToDictionary(batch => batch.Id);
+        foreach (var allocation in outcome.Lines)
+        {
+            var batch = byId[allocation.BatchId];
+            var before = batch.QuantityRemaining;
+            batch.QuantityRemaining -= allocation.Quantity;
+            if (batch.QuantityRemaining <= 0)
+            {
+                batch.QuantityRemaining = 0;
+                batch.Status = BatchStatus.Depleted;
+            }
+
+            db.StockMovements.Add(new StockMovement
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batch.Id,
+                OrderId = orderId,
+                Type = MovementType.OrderWriteOff,
+                Quantity = allocation.Quantity,
+                QuantityBefore = before,
+                CreatedAt = now,
+            });
+        }
+
+        item.KitchenNote = null;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        await broadcaster.PublishAsync(new StockChange(productIds, [], [], orderId, nameof(OrderStatus.Accepted), null), cancellationToken);
+        return ServiceResult<bool>.Ok(true);
     }
 
     private async Task LockProductBatchesAsync(Guid productId, CancellationToken cancellationToken)

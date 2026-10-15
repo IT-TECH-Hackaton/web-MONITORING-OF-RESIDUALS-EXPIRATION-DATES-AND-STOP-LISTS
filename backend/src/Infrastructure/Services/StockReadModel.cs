@@ -35,6 +35,56 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         }).ToList();
     }
 
+    /// <summary>Куда уходил продукт: приход, стол заказа или акт. Новые сверху.</summary>
+    public async Task<IReadOnlyList<ProductUseView>> UsesAsync(Guid productId, CancellationToken cancellationToken)
+    {
+        var movements = await db.StockMovements.AsNoTracking()
+            .Include(movement => movement.Batch).ThenInclude(batch => batch.Delivery)
+            .Include(movement => movement.Batch).ThenInclude(batch => batch.Product)
+            .Include(movement => movement.Order).ThenInclude(order => order!.Items).ThenInclude(item => item.Dish)
+            .Where(movement => movement.Batch.ProductId == productId)
+            .OrderByDescending(movement => movement.CreatedAt)
+            .Take(40)
+            .ToListAsync(cancellationToken);
+        return movements.Select(MapUse).ToList();
+    }
+
+    private static ProductUseView MapUse(StockMovement movement)
+    {
+        var unit = movement.Batch.Product.Unit;
+        var after = movement.QuantityBefore is decimal before ? before - movement.Quantity : (decimal?)null;
+        var (kind, place) = movement.Type switch
+        {
+            MovementType.Receipt => ("Receipt", $"Поставка {movement.Batch.Delivery.Number}"),
+            MovementType.OrderWriteOff => ("Order", OrderPlace(movement.Order)),
+            MovementType.ExpiryWriteOff => ("WriteOff", "Списание, срок"),
+            _ => ("WriteOff", WriteOffPlace(movement.Reason)),
+        };
+        return new ProductUseView(movement.Id, movement.CreatedAt, kind, place, movement.Quantity, unit, movement.QuantityBefore, after);
+    }
+
+    private static string OrderPlace(CustomerOrder? order)
+    {
+        if (order is null)
+        {
+            return "Заказ";
+        }
+
+        var table = string.IsNullOrWhiteSpace(order.TableNumber) ? "без стола" : $"стол {order.TableNumber}";
+        var dishes = string.Join(", ", order.Items.Select(item => item.Dish.Name).Distinct());
+        return string.IsNullOrWhiteSpace(dishes) ? $"Заказ, {table}" : $"Заказ, {table}: {dishes}";
+    }
+
+    private static string WriteOffPlace(string? reason) => reason switch
+    {
+        nameof(WriteOffReason.Waste) => "Списание, брак",
+        nameof(WriteOffReason.Spoilage) => "Списание, порча",
+        nameof(WriteOffReason.Training) => "Списание, проработка",
+        nameof(WriteOffReason.StaffMeal) => "Списание, питание",
+        nameof(WriteOffReason.Expiry) => "Списание, срок",
+        _ => "Списание",
+    };
+
     /// <summary>Партии одного продукта, от ближайшего срока. Вход: productId.</summary>
     public async Task<IReadOnlyList<BatchView>> BatchesAsync(Guid productId, CancellationToken cancellationToken)
     {
@@ -449,7 +499,14 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         order.CreatedByUser.Login,
         order.Status,
         order.RejectionReason,
-        order.Items.Select(item => new OrderLineView(item.Id, item.DishId, item.Dish.Name, item.Portions, item.KitchenStatus, item.KitchenNote)).ToList(),
+        order.Items.Select(item => new OrderLineView(
+            item.Id,
+            item.DishId,
+            item.Dish.Name,
+            item.Portions,
+            item.KitchenStatus,
+            item.KitchenNote,
+            item.Dish.Ingredients.Select(line => new RecipeNeedView(line.Product.Name, line.Quantity * item.Portions, line.Product.Unit)).ToList())).ToList(),
         order.Shortages.Select(shortage => new ShortageView(
             shortage.ProductId,
             shortage.Product.Name,
@@ -543,7 +600,7 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
     private IQueryable<CustomerOrder> OrderQuery() =>
         db.Orders.AsNoTracking()
             .Include(order => order.CreatedByUser)
-            .Include(order => order.Items).ThenInclude(item => item.Dish)
+            .Include(order => order.Items).ThenInclude(item => item.Dish).ThenInclude(dish => dish.Ingredients).ThenInclude(line => line.Product)
             .Include(order => order.Shortages).ThenInclude(shortage => shortage.Product)
             .Include(order => order.Movements).ThenInclude(movement => movement.Batch).ThenInclude(batch => batch.Product);
 

@@ -51,6 +51,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
             await SeedShiftAsync(cancellationToken);
             await SeedPurchaseLinesAsync(cancellationToken);
             await SeedShowcaseAsync(cancellationToken);
+            await SeedFillAsync(cancellationToken);
             return;
         }
 
@@ -69,6 +70,7 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         await SeedShiftAsync(cancellationToken);
         await SeedPurchaseLinesAsync(cancellationToken);
         await SeedShowcaseAsync(cancellationToken);
+        await SeedFillAsync(cancellationToken);
     }
 
     private async Task EnsureMoneyAsync(CancellationToken cancellationToken)
@@ -574,6 +576,279 @@ public sealed class DbSeeder(AppDbContext db, IConfiguration configuration, IClo
         }
 
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>Плотная витрина: поставки, заказы со списанием, акты, заказ поставщику, чат. Повторно не пишется.</summary>
+    private async Task SeedFillAsync(CancellationToken cancellationToken)
+    {
+        var marker = Guid.Parse("51000000-0000-0000-0000-000000000001");
+        if (await db.Orders.AnyAsync(order => order.Id == marker, cancellationToken))
+        {
+            return;
+        }
+
+        var now = clock.UtcNow;
+        var manager = await db.Users.FirstAsync(user => user.Login == "manager", cancellationToken);
+        var buyer = await db.Users.FirstAsync(user => user.Login == "buyer", cancellationToken);
+        var chef = await db.Users.FirstAsync(user => user.Login == "kitchen", cancellationToken);
+        var store = await db.Users.FirstAsync(user => user.Login == "store", cancellationToken);
+        var waiter = await db.Users.FirstAsync(user => user.Login == "waiter", cancellationToken);
+        var waiter2 = await db.Users.FirstOrDefaultAsync(user => user.Login == "waiter2", cancellationToken) ?? waiter;
+        var kitchen2 = await db.Users.FirstOrDefaultAsync(user => user.Login == "kitchen2", cancellationToken) ?? chef;
+        var supply = await db.Users.FirstOrDefaultAsync(user => user.Login == "supply", cancellationToken);
+        var suppliers = new[] { "Метро Кеш энд Керри", "Северная рыба", "Мясной двор", "Овощи Юг", "Молочный двор", "Бакалея Дом" };
+        (Guid Product, decimal Qty, int Life)[] packs =
+        [
+            (SalmonId, 1800, 4), (MozzarellaId, 2200, 12), (TomatoId, 4000, 5), (BasilId, 300, 4),
+            (PastaId, 5000, 120), (CreamId, 3000, 7), (CoffeeId, 1600, 90), (MilkId, 8000, 6),
+            (MoneyCatalog.Chicken, 3500, 4), (MoneyCatalog.Beef, 2800, 5), (MoneyCatalog.Shrimp, 900, 3),
+            (MoneyCatalog.Potato, 12000, 20), (MoneyCatalog.Lemon, 1500, 12), (MoneyCatalog.Lettuce, 800, 3),
+            (MoneyCatalog.Flour, 10000, 90), (MoneyCatalog.Egg, 120, 18),
+        ];
+        var receivers = new[] { manager.Id, buyer.Id, chef.Id, store.Id };
+
+        for (var day = 1; day <= 18; day++)
+        {
+            var pack = packs[day % packs.Length];
+            var extra = packs[(day + 5) % packs.Length];
+            var at = DateTime.SpecifyKind(now.Date.AddDays(-day).AddHours(7 + (day % 6)), DateTimeKind.Utc);
+            db.Deliveries.Add(PricedDelivery(
+                Guid.Parse($"33000000-0000-0000-0000-{day:000000000000}"),
+                $"НАБ-{day:00}",
+                at,
+                receivers[day % receivers.Length],
+                suppliers[day % suppliers.Length],
+                Line(pack.Product, pack.Qty, at.AddDays(pack.Life)),
+                Line(extra.Product, Math.Max(1, extra.Qty / 2), at.AddDays(extra.Life))));
+        }
+
+        db.Deliveries.Add(new Delivery
+        {
+            Id = Guid.Parse("33000000-0000-0000-0000-000000000099"),
+            Number = "НАБ-МАШИНА",
+            Supplier = "Северная рыба",
+            CreatedAt = now.AddHours(-2),
+            Stage = DeliveryStage.Parked,
+            Batches =
+            [
+                Parked(Guid.Parse("33000000-0000-0000-0000-000000000099"), SalmonId, 1200, now.AddDays(2)),
+                Parked(Guid.Parse("33000000-0000-0000-0000-000000000099"), CreamId, 2000, now.AddDays(5)),
+                Parked(Guid.Parse("33000000-0000-0000-0000-000000000099"), BasilId, 150, now.AddDays(3)),
+            ],
+        });
+
+        db.Deliveries.Add(PricedDelivery(
+            Guid.Parse("33000000-0000-0000-0000-000000000098"),
+            "НАБ-ПОРЧА",
+            now.AddDays(-1).AddHours(6),
+            chef.Id,
+            "Овощи Юг",
+            new Batch
+            {
+                Id = Guid.NewGuid(),
+                ProductId = MoneyCatalog.Lettuce,
+                QuantityInitial = 600,
+                QuantityRemaining = 420,
+                ExpiresAt = now.AddHours(-3),
+                Status = BatchStatus.PendingWriteOff,
+                UnitCost = MoneyCatalog.Products.First(item => item.Id == MoneyCatalog.Lettuce).Price,
+                ReceivedAt = now.AddDays(-1).AddHours(6),
+            }));
+
+        db.ServiceShifts.AddRange(
+            ClosedShift("34000000-0000-0000-0000-000000000001", now.AddDays(-12).AddHours(8), now.AddDays(-12).AddHours(23), chef.Id, manager.Id),
+            ClosedShift("34000000-0000-0000-0000-000000000002", now.AddDays(-10).AddHours(9), now.AddDays(-10).AddHours(22), kitchen2.Id, chef.Id),
+            ClosedShift("34000000-0000-0000-0000-000000000003", now.AddDays(-8).AddHours(8), now.AddDays(-8).AddHours(21), store.Id, manager.Id),
+            ClosedShift("34000000-0000-0000-0000-000000000004", now.AddDays(-5).AddHours(10), now.AddDays(-5).AddHours(23), chef.Id, buyer.Id),
+            ClosedShift("34000000-0000-0000-0000-000000000005", now.AddDays(-3).AddHours(8), now.AddDays(-3).AddHours(20), kitchen2.Id, chef.Id));
+
+        var notes = new[]
+        {
+            (chef, "Лосось на банкет режем после шести, не раньше."),
+            (waiter, "Стол 12 просит без базилика."),
+            (manager, "Молоко на утро возьмите из левой камеры."),
+            (store, "Картофель приехал, ящик у чёрного хода."),
+            (waiter2, "Стол 3 добавил ещё два капучино."),
+            (kitchen2, "Креветки короткие по сроку, в приоритет."),
+            (buyer, "Сыр на завтра подтвердили, машина к десяти."),
+            (chef, "Тесто на пиццу не прошло, плитку не открывать."),
+        };
+        for (var index = 0; index < notes.Length; index++)
+        {
+            var (who, text) = notes[index];
+            db.StaffMessages.Add(new StaffMessage
+            {
+                Id = Guid.Parse($"35000000-0000-0000-0000-{index + 1:000000000000}"),
+                AuthorId = who.Id,
+                Channel = "Staff",
+                Text = text,
+                CreatedAt = now.AddHours(-index * 3),
+            });
+        }
+
+        db.StaffMessages.Add(new StaffMessage
+        {
+            Id = Guid.Parse("35000000-0000-0000-0000-000000000020"),
+            Channel = "System",
+            Text = "Салат, 420 г: порча. Срок вышел, с готовки снят.",
+            CreatedAt = now.AddHours(-3),
+        });
+        if (supply is not null)
+        {
+            db.StaffMessages.AddRange(
+                new StaffMessage
+                {
+                    Id = Guid.Parse("35000000-0000-0000-0000-000000000030"),
+                    AuthorId = supply.Id,
+                    Channel = "Supply",
+                    Text = "Рыба будет к обеду, сливки везу отдельно.",
+                    CreatedAt = now.AddHours(-4),
+                },
+                new StaffMessage
+                {
+                    Id = Guid.Parse("35000000-0000-0000-0000-000000000031"),
+                    AuthorId = manager.Id,
+                    Channel = "Supply",
+                    Text = "Сливки берите с запасом, банкет в субботу.",
+                    CreatedAt = now.AddHours(-3),
+                });
+        }
+
+        (Guid Product, decimal Qty, string Note, PurchaseSource Source, Guid Who)[] requests =
+        [
+            (MoneyCatalog.Shrimp, 700, "гриль в пятницу", PurchaseSource.Chef, chef.Id),
+            (MoneyCatalog.Lemon, 400, "к рыбе", PurchaseSource.Chef, kitchen2.Id),
+            (MilkId, 6000, "кофейня на выходные", PurchaseSource.Manager, buyer.Id),
+            (MoneyCatalog.Butter, 800, "выпечка", PurchaseSource.Forecast, manager.Id),
+            (PastaId, 2500, "запас на неделю", PurchaseSource.Manager, buyer.Id),
+            (MoneyCatalog.Garlic, 300, "соус", PurchaseSource.Chef, chef.Id),
+        ];
+        for (var index = 0; index < requests.Length; index++)
+        {
+            var row = requests[index];
+            db.PurchaseLines.Add(new PurchaseLine
+            {
+                Id = Guid.Parse($"36000000-0000-0000-0000-{index + 1:000000000000}"),
+                ProductId = row.Product,
+                Quantity = row.Qty,
+                Note = row.Note,
+                Source = row.Source,
+                RequestedBy = row.Who,
+                CreatedAt = now.AddHours(-6 - index),
+            });
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        (string Id, UserAccount Who, string Table, Guid Dish, int Portions, int Days, int Hour, Guid Product, decimal Qty)[] sales =
+        [
+            ("51000000-0000-0000-0000-000000000001", waiter, "4", MoneyCatalog.PastaDishId, 2, 0, 12, SalmonId, 200),
+            ("51000000-0000-0000-0000-000000000002", waiter2, "6", MoneyCatalog.PizzaDishId, 1, 0, 13, MozzarellaId, 150),
+            ("51000000-0000-0000-0000-000000000003", waiter, "2", MoneyCatalog.CoffeeDishId, 4, 0, 15, MilkId, 400),
+            ("51000000-0000-0000-0000-000000000004", waiter2, "9", MoneyCatalog.CapreseDishId, 2, 1, 14, TomatoId, 160),
+            ("51000000-0000-0000-0000-000000000005", waiter, "1", MoneyCatalog.CheesecakeDishId, 2, 1, 20, CreamId, 160),
+            ("51000000-0000-0000-0000-000000000006", waiter2, "8", MoneyCatalog.PastaDishId, 3, 2, 19, SalmonId, 300),
+            ("51000000-0000-0000-0000-000000000007", waiter, "5", Guid.Parse("20000000-0000-0000-0000-000000000005"), 2, 3, 18, MoneyCatalog.Chicken, 240),
+            ("51000000-0000-0000-0000-000000000008", waiter2, "12", Guid.Parse("20000000-0000-0000-0000-000000000006"), 2, 4, 13, MoneyCatalog.Beef, 200),
+            ("51000000-0000-0000-0000-000000000009", waiter, "3", Guid.Parse("20000000-0000-0000-0000-000000000007"), 1, 5, 21, MoneyCatalog.Shrimp, 120),
+            ("51000000-0000-0000-0000-000000000010", waiter2, "10", MoneyCatalog.CoffeeDishId, 5, 6, 11, CoffeeId, 90),
+            ("51000000-0000-0000-0000-000000000011", waiter, "7", MoneyCatalog.PizzaDishId, 2, 7, 16, MozzarellaId, 200),
+            ("51000000-0000-0000-0000-000000000012", waiter2, "14", MoneyCatalog.CheesecakeDishId, 1, 8, 22, CreamId, 80),
+            ("51000000-0000-0000-0000-000000000013", waiter, "6", MoneyCatalog.CapreseDishId, 3, 9, 15, TomatoId, 200),
+            ("51000000-0000-0000-0000-000000000014", waiter2, "2", MoneyCatalog.PastaDishId, 1, 11, 18, PastaId, 100),
+        ];
+        foreach (var sale in sales)
+        {
+            await SellFilled(sale.Id, sale.Who, sale.Table, sale.Dish, sale.Portions, sale.Days, sale.Hour, sale.Product, sale.Qty);
+        }
+
+        await WasteFilled(TomatoId, 180, nameof(WriteOffReason.Waste), MovementType.KitchenWriteOff, 1);
+        await WasteFilled(MoneyCatalog.Lettuce, 90, nameof(WriteOffReason.Spoilage), MovementType.KitchenWriteOff, 2);
+        await WasteFilled(CreamId, 200, nameof(WriteOffReason.StaffMeal), MovementType.KitchenWriteOff, 3);
+        await WasteFilled(MoneyCatalog.Chicken, 220, nameof(WriteOffReason.Training), MovementType.KitchenWriteOff, 5);
+        await WasteFilled(MilkId, 300, nameof(WriteOffReason.Waste), MovementType.KitchenWriteOff, 6);
+        await db.SaveChangesAsync(cancellationToken);
+
+        async Task SellFilled(string orderId, UserAccount who, string table, Guid dishId, int portions, int daysAgo, int hour, Guid productId, decimal writeOffQty)
+        {
+            var at = DateTime.SpecifyKind(now.Date.AddDays(-daysAgo).AddHours(hour), DateTimeKind.Utc);
+            var orderGuid = Guid.Parse(orderId);
+            var batch = await db.Batches.FirstOrDefaultAsync(
+                row => row.ProductId == productId && row.QuantityRemaining >= writeOffQty && row.Status == BatchStatus.Active && row.ExpiresAt > now,
+                cancellationToken);
+            db.Orders.Add(new CustomerOrder
+            {
+                Id = orderGuid,
+                CreatedAt = at,
+                CreatedBy = who.Id,
+                Status = OrderStatus.Accepted,
+                TableNumber = table,
+                Items = [new OrderItem { Id = Guid.NewGuid(), OrderId = orderGuid, DishId = dishId, Portions = portions, KitchenStatus = KitchenStatus.Ready }],
+            });
+            if (batch is null)
+            {
+                return;
+            }
+
+            var before = batch.QuantityRemaining;
+            batch.QuantityRemaining -= writeOffQty;
+            db.StockMovements.Add(new StockMovement
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batch.Id,
+                OrderId = orderGuid,
+                Type = MovementType.OrderWriteOff,
+                Quantity = writeOffQty,
+                QuantityBefore = before,
+                CreatedAt = at,
+            });
+        }
+
+        async Task WasteFilled(Guid productId, decimal quantity, string reason, MovementType type, int daysAgo)
+        {
+            var batch = await db.Batches.FirstOrDefaultAsync(
+                row => row.ProductId == productId && row.QuantityRemaining >= quantity && row.Status == BatchStatus.Active,
+                cancellationToken);
+            if (batch is null)
+            {
+                return;
+            }
+
+            var before = batch.QuantityRemaining;
+            batch.QuantityRemaining -= quantity;
+            if (batch.QuantityRemaining == 0)
+            {
+                batch.Status = BatchStatus.Depleted;
+            }
+
+            db.StockMovements.Add(new StockMovement
+            {
+                Id = Guid.NewGuid(),
+                BatchId = batch.Id,
+                Type = type,
+                Reason = reason,
+                Quantity = quantity,
+                QuantityBefore = before,
+                CreatedAt = now.AddDays(-daysAgo).AddHours(16),
+            });
+        }
+
+        Batch Parked(Guid deliveryId, Guid productId, decimal quantity, DateTime expiresAt)
+        {
+            var price = MoneyCatalog.Products.First(item => item.Id == productId).Price;
+            return new Batch
+            {
+                Id = Guid.NewGuid(),
+                DeliveryId = deliveryId,
+                ProductId = productId,
+                QuantityInitial = quantity,
+                QuantityRemaining = quantity,
+                ExpiresAt = expiresAt,
+                Status = BatchStatus.Arrived,
+                UnitCost = price,
+                ReceivedAt = now.AddHours(-2),
+            };
+        }
     }
 
     private static ServiceShift ClosedShift(string id, DateTime opened, DateTime closed, Guid openedBy, Guid closedBy) => new()

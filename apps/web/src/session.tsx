@@ -76,7 +76,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return bindLive(connection);
     }
     const refresh = () => {
-      for (const key of ["dashboard", "stock", "batches", "stop-list", "priority", "hot-offers", "orders", "deliveries", "purchase-lines", "supply-order", "intake", "write-offs", "deficits", "weekly-forecast", "spend", "kitchen", "reports", "shift-current", "shift-journal", "pending-write-offs", "chat", "staff-pending"]) {
+      for (const key of ["dashboard", "stock", "batches", "uses", "stop-list", "priority", "hot-offers", "orders", "deliveries", "purchase-lines", "supply-order", "intake", "write-offs", "deficits", "weekly-forecast", "spend", "kitchen", "reports", "shift-current", "shift-journal", "pending-write-offs", "chat", "staff-pending"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     };
@@ -96,6 +96,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     connection.on(LiveEvents.hotOffersUpdated, refresh);
     connection.on(LiveEvents.shiftUpdated, refresh);
     connection.on(LiveEvents.chatMessage, onChat);
+    connection.on(LiveEvents.orderSpoiled, (payload: { table?: string; dish?: string; text?: string }) => {
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      pushNotice(`${payload.table ?? "Стол"}, ${payload.dish ?? "блюдо"} испорчено. ${payload.text ?? ""} Скажите гостю.`);
+    });
     return bindLive(connection);
   }, [queryClient, session?.accessToken, session?.role]);
 

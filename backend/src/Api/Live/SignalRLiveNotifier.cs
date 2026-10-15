@@ -35,6 +35,9 @@ public sealed class SignalRLiveNotifier(IHubContext<LiveHub> hub) : ILiveNotifie
         return hub.Clients.Client(connectionId).SendAsync("order.decided", new { orderId, status }, cancellationToken);
     }
 
+    public Task OrderSpoiled(Guid waiterId, string table, string dish, string text, CancellationToken cancellationToken) =>
+        hub.Clients.User(waiterId.ToString()).SendAsync("order.spoiled", new { table, dish, text }, cancellationToken);
+
     public Task KitchenUpdated(CancellationToken cancellationToken) =>
         hub.Clients.Group(LiveHub.GroupName).SendAsync("kitchen.updated", new { }, cancellationToken);
 

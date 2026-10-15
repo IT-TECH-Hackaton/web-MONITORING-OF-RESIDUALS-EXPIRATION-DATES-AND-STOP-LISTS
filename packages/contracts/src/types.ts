@@ -5,7 +5,7 @@ export type Freshness = "Ok" | "Expiring" | "Expired" | "Empty";
 export type MovementType = "Receipt" | "OrderWriteOff" | "ExpiryWriteOff" | "KitchenWriteOff";
 export type Role = "Manager" | "Waiter" | "Kitchen" | "Supply";
 export type DeliveryStage = "Parked" | "Receiving" | "KitchenDone" | "Accepted";
-export type KitchenStatus = "Queued" | "Cooking" | "Ready";
+export type KitchenStatus = "Queued" | "Cooking" | "Ready" | "Spoiled";
 
 export type Session = {
   accessToken: string;
@@ -30,6 +30,7 @@ export type OrderLine = {
   portions: number;
   kitchenStatus: KitchenStatus;
   kitchenNote: string | null;
+  needs?: { productName: string; quantity: number; unit: Unit }[];
 };
 
 export type Order = {
@@ -42,6 +43,17 @@ export type Order = {
   shortages: Shortage[];
   tableNumber: string | null;
   writeOffs?: { productName: string; before: number; quantity: number; after: number }[];
+};
+
+export type ProductUse = {
+  id: string;
+  at: string;
+  kind: "Receipt" | "Order" | "WriteOff";
+  place: string;
+  quantity: number;
+  unit: Unit;
+  before?: number | null;
+  after?: number | null;
 };
 
 export type Batch = {

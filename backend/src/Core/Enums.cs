@@ -58,6 +58,7 @@ public enum KitchenStatus
     Queued,
     Cooking,
     Ready,
+    Spoiled,
 }
 
 /// <summary>Статья акта и автосписания: срок, брак, порча, проработка, питание персонала.</summary>

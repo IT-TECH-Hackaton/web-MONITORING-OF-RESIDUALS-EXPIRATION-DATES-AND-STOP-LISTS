@@ -1,9 +1,9 @@
-import type { Batch, Freshness, Unit } from "@repo/contracts";
+import { formatQty, type Batch, type Freshness, type Unit } from "@repo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useSession } from "../session";
-import { Empty, ErrorText, formatExpiry, FreshnessPill, Hours, Panel, Qty } from "../ui";
+import { Empty, ErrorText, formatExpiry, formatWhen, FreshnessPill, Hours, Panel, Qty } from "../ui";
 import { ExpiredWriteOffTable } from "./Dashboard";
 
 const freshnessColor: Record<Freshness, string> = {
@@ -131,6 +131,7 @@ export function StockProductPage() {
   const { productId = "" } = useParams();
   const { client } = useSession();
   const batches = useQuery({ queryKey: ["batches", productId], queryFn: () => client.batches(productId), enabled: Boolean(productId) });
+  const uses = useQuery({ queryKey: ["uses", productId], queryFn: () => client.productUses(productId), enabled: Boolean(productId) });
   const stock = useQuery({ queryKey: ["stock"], queryFn: () => client.stock() });
   const item = stock.data?.find((row) => row.productId === productId);
   const arrived = (batches.data ?? []).filter((batch) => receivedQty(batch) > 0);
@@ -191,6 +192,32 @@ export function StockProductPage() {
         ) : null}
         {waiting.length > 0 ? (
           <p className="reason">Ещё не на складе: {waiting.map((batch) => `${batch.deliveryNumber}, заявлено ${batch.quantityInitial}`).join("; ")}. Срок станет складским после итога менеджера.</p>
+        ) : null}
+      </Panel>
+      <Panel title="Куда уходило">
+        <p className="reason">Когда и куда: приход с поставки, стол заказа или акт. У заказа видно, сколько было и сколько осталось.</p>
+        {uses.isLoading ? <p>Загрузка…</p> : null}
+        {uses.error ? <ErrorText error={uses.error} /> : null}
+        {!uses.isLoading && (uses.data?.length ?? 0) === 0 ? <Empty>Движений пока нет.</Empty> : null}
+        {uses.data && uses.data.length > 0 ? (
+          <div className="rep-scroll">
+            <table className="rep-table rep-staff">
+              <thead><tr><th>Когда</th><th>Куда</th><th className="num">Сколько</th></tr></thead>
+              <tbody>
+                {uses.data.map((row) => (
+                  <tr key={row.id}>
+                    <td>{formatWhen(row.at)}</td>
+                    <td>{row.place}</td>
+                    <td className="num">
+                      {row.before != null && row.after != null
+                        ? <>{formatQty(row.before, row.unit)} − {formatQty(row.quantity, row.unit)} = {formatQty(row.after, row.unit)}</>
+                        : <Qty value={row.quantity} unit={row.unit} />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : null}
       </Panel>
     </div>
