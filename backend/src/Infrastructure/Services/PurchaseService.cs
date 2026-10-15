@@ -33,6 +33,11 @@ public sealed class PurchaseService(AppDbContext db, IClock clock, StockReadMode
             return ServiceResult<PurchaseLineView>.Bad("Количество должно быть больше нуля.");
         }
 
+        if (command.Quantity > MaxQuantity)
+        {
+            return ServiceResult<PurchaseLineView>.Bad("Количество слишком большое.");
+        }
+
         var product = await db.Products.FirstOrDefaultAsync(row => row.Id == command.ProductId && row.IsActive, cancellationToken);
         if (product is null)
         {
@@ -45,6 +50,11 @@ public sealed class PurchaseService(AppDbContext db, IClock clock, StockReadMode
             cancellationToken);
         if (open is not null)
         {
+            if (open.Quantity + command.Quantity > MaxQuantity)
+            {
+                return ServiceResult<PurchaseLineView>.Bad("Количество слишком большое.");
+            }
+
             open.Quantity += command.Quantity;
             if (note is not null)
             {
@@ -120,7 +130,7 @@ public sealed class PurchaseService(AppDbContext db, IClock clock, StockReadMode
         return ServiceResult<bool>.Ok(true);
     }
 
-    public async Task FulfillForDeliveryAsync(Guid deliveryId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
+    public async Task FulfillForDeliveryAsync(Guid deliveryId, IReadOnlyCollection<Guid> productIds, DateTime orderedBefore, CancellationToken cancellationToken)
     {
         if (productIds.Count == 0)
         {
@@ -128,7 +138,7 @@ public sealed class PurchaseService(AppDbContext db, IClock clock, StockReadMode
         }
 
         var open = await db.PurchaseLines
-            .Where(line => line.FulfilledAt == null && productIds.Contains(line.ProductId))
+            .Where(line => line.FulfilledAt == null && line.CreatedAt <= orderedBefore && productIds.Contains(line.ProductId))
             .ToListAsync(cancellationToken);
         if (open.Count == 0)
         {
@@ -153,6 +163,8 @@ public sealed class PurchaseService(AppDbContext db, IClock clock, StockReadMode
             .SingleAsync(row => row.Id == id, cancellationToken);
         return Map(line);
     }
+
+    private const decimal MaxQuantity = 1_000_000_000m;
 
     private static PurchaseLineView Map(PurchaseLine line) => new(
         line.Id,

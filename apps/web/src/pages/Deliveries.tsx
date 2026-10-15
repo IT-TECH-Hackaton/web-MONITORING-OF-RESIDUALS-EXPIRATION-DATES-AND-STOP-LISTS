@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useSession } from "../session";
-import { Empty, ErrorText, formatWhen, FreshnessPill, Panel, Qty } from "../ui";
+import { Empty, ErrorText, formatExpiry, formatWhen, FreshnessPill, Panel, Qty } from "../ui";
 
 type Line = { key: string; productId: string; name: string; unit: Unit; quantity: string; expiresAt: string };
 
@@ -89,7 +89,7 @@ function productChips(delivery: Delivery) {
 export function DeliveriesPage() {
   const { client } = useSession();
   const queryClient = useQueryClient();
-  const deliveries = useQuery({ queryKey: ["deliveries"], queryFn: () => client.deliveries() });
+  const deliveries = useQuery({ queryKey: ["deliveries"], queryFn: () => client.deliveries(), refetchInterval: 5000 });
   const products = useQuery({ queryKey: ["products"], queryFn: () => client.products() });
   const order = useQuery({ queryKey: ["purchase-lines"], queryFn: () => client.purchaseLines(true) });
   const [number, setNumber] = useState("");
@@ -132,7 +132,12 @@ export function DeliveriesPage() {
   });
 
   const addOrder = useMutation({
-    mutationFn: () => client.addPurchaseLine({ productId: orderProduct, quantity: Number(orderQty), note: orderNote.trim() || null }),
+    mutationFn: () => {
+      const quantity = Number(orderQty);
+      if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Количество должно быть больше нуля.");
+      if (quantity > 1_000_000_000) throw new Error("Количество слишком большое.");
+      return client.addPurchaseLine({ productId: orderProduct, quantity, note: orderNote.trim() || null });
+    },
     onSuccess: async () => {
       setOrderProduct("");
       setOrderQty("");
@@ -143,18 +148,13 @@ export function DeliveriesPage() {
     onError: (caught) => setOrderError(caught instanceof Error ? caught.message : "Строка не добавилась"),
   });
 
-  function fillFromOrder(rows: PurchaseLine[]) {
-    if (rows.length === 0) return;
-    setLines(rows.map((row) => ({
-      key: newId(),
-      productId: row.productId,
-      name: row.productName,
-      unit: row.unit,
-      quantity: String(row.quantity),
-      expiresAt: typicalExpiry(row.productName),
-    })));
-    setRequestOpen(false);
-  }
+  const arriveOrder = useMutation({
+    mutationFn: () => client.sendOrderAsDelivery(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["purchase-lines"] });
+      await queryClient.invalidateQueries({ queryKey: ["deliveries"] });
+    },
+  });
 
   async function copyRequest(rows: PurchaseLine[]) {
     await navigator.clipboard.writeText(requestText(rows, requestSupplier));
@@ -166,7 +166,16 @@ export function DeliveriesPage() {
     setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
   }
 
-  const rows = deliveries.data ?? [];
+  const rows = (deliveries.data ?? []).filter((delivery) => delivery.acceptedAt);
+  const arrived = (deliveries.data ?? []).filter((delivery) => !delivery.acceptedAt);
+  const receive = useMutation({
+    mutationFn: (id: string) => client.startReceiving(id),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["deliveries"] }); },
+  });
+  const accept = useMutation({
+    mutationFn: (id: string) => client.acceptDelivery(id),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["deliveries"] }); },
+  });
   const maxBatches = Math.max(1, ...rows.map((delivery) => delivery.batches.length));
   const orderRows = order.data ?? [];
 
@@ -175,12 +184,12 @@ export function DeliveriesPage() {
       <header className="rep-head">
         <div>
           <h1>Поставки</h1>
-          <p>Сначала заявка поставщику. Потом приход: факт с накладной и свой «годен до» у каждой пачки.</p>
+          <p>Заявка уходит поставке. Кухня сверяет срок с пачки и отмечает, что взяли. На склад попадает только это.</p>
         </div>
         <Link to="/intake" className="btn-ghost">Приёмка QR</Link>
       </header>
       <Panel title="Заказ поставщику">
-        <p className="reason">Внутренний список: кухня и прогноз. Склад ещё не меняется. Поставщику уходит заявка — таблица, копия или CSV. Когда машина приехала — перенесите в приход и снимите срок с пачки.</p>
+        <p className="reason">Внутренний список: кухня и прогноз. Склад ещё не меняется. Поставка забирает открытые строки целиком. Срок и отказ по строке кухня ставит на приёмке.</p>
         {order.isLoading ? <p>Загрузка списка…</p> : null}
         {orderRows.length === 0 && !order.isLoading ? <Empty>Список пуст. Добавьте позицию или дождитесь дописки шефа.</Empty> : null}
         {orderRows.length > 0 ? (
@@ -213,15 +222,16 @@ export function DeliveriesPage() {
               ))}
             </select>
           </label>
-          <label>Кол-во<input type="number" min="0.001" step="0.001" value={orderQty} onChange={(event) => setOrderQty(event.target.value)} required /></label>
+          <label>Кол-во<input type="number" min="0.001" max="1000000000" step="0.001" value={orderQty} onChange={(event) => setOrderQty(event.target.value)} required /></label>
           <label>Заметка<input value={orderNote} onChange={(event) => setOrderNote(event.target.value)} placeholder="банкет, замена…" /></label>
           {orderError ? <p className="error-text">{orderError}</p> : null}
+          {arriveOrder.error ? <ErrorText error={arriveOrder.error} /> : null}
           <div className="btn-row">
             <button className="btn" disabled={addOrder.isPending}>В заказ</button>
             {orderRows.length > 0 ? (
               <>
                 <button className="btn-ghost" type="button" onClick={() => setRequestOpen(true)}>Заявка поставщику</button>
-                <button className="btn-ghost" type="button" onClick={() => fillFromOrder(orderRows)}>Перенести в приход</button>
+                <button className="btn-ghost" type="button" disabled={arriveOrder.isPending} onClick={() => arriveOrder.mutate()}>Машина по заказу</button>
               </>
             ) : null}
           </div>
@@ -260,7 +270,7 @@ export function DeliveriesPage() {
         </section>
       ) : null}
       <Panel title="Приход в холодильник">
-          <p className="reason">Годен до — с пачки, у каждой позиции свой. Рыба короче, бакалея дольше. Подставили типичный срок — поправьте по этикетке.</p>
+          <p className="reason">Годен до — с пачки. Это ещё не склад: кухня подтвердит, сколько взяли, и только потом менеджер закроет итог.</p>
           <form className="form" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}>
             <label className="del-number">Номер накладной<input value={number} onChange={(event) => setNumber(event.target.value)} required /></label>
             <label>Поставщик<input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Северная рыба" /></label>
@@ -296,11 +306,56 @@ export function DeliveriesPage() {
             ))}
             {error ? <p className="error-text">{error}</p> : null}
             <div className="btn-row">
-              <button className="btn" disabled={create.isPending}>Принять</button>
+              <button className="btn" disabled={create.isPending}>Отметить приезд</button>
               <button className="btn-ghost" type="button" onClick={() => setLines((current) => [...current, emptyLine()])}>Ещё позиция</button>
             </div>
           </form>
         </Panel>
+      {arrived.length > 0 ? (
+        <Panel title="Приехало, ещё не на складе">
+          <div className="stack">
+            {arrived.map((delivery) => {
+              const stage = delivery.stage ?? "Parked";
+              return (
+                <article key={delivery.id} className="del-step">
+                  <div className="del-step-head">
+                    <span className="rep-dot" style={{ background: "var(--amber)" }} />
+                    <div>
+                      <strong>{delivery.number}</strong>
+                      <p className="reason">{delivery.supplier ?? "Без поставщика"} · {productChips(delivery).shown.join(", ")}</p>
+                    </div>
+                    {stage === "Parked" ? (
+                      <button type="button" className="btn" disabled={receive.isPending} onClick={() => receive.mutate(delivery.id)}>В приёмку</button>
+                    ) : null}
+                    {stage === "Receiving" ? <span className="reason">Кухня принимает</span> : null}
+                    {stage === "KitchenDone" ? (
+                      <button type="button" className="btn" disabled={accept.isPending} onClick={() => accept.mutate(delivery.id)}>Подтвердить итог</button>
+                    ) : null}
+                  </div>
+                  <table className="rep-table">
+                    <thead><tr><th>Продукт</th><th className="num">Заявлено</th><th>Годен до</th><th className="num">Взяли</th></tr></thead>
+                    <tbody>
+                      {delivery.batches.map((batch) => (
+                        <tr key={batch.id} className={batch.acceptedQuantity === 0 ? "is-skip" : ""}>
+                          <td>
+                            {batch.productName}
+                            {batch.acceptedQuantity === 0 && batch.kitchenNote ? <p className="reason">{batch.kitchenNote}</p> : null}
+                          </td>
+                          <td className="num"><Qty value={batch.quantityInitial} unit={batch.unit} /></td>
+                          <td>{formatExpiry(batch.expiresAt)}</td>
+                          <td className="num">{batch.acceptedQuantity == null ? "—" : <Qty value={batch.acceptedQuantity} unit={batch.unit} />}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </article>
+              );
+            })}
+          </div>
+          {receive.error ? <ErrorText error={receive.error} /> : null}
+          {accept.error ? <ErrorText error={accept.error} /> : null}
+        </Panel>
+      ) : null}
       <Panel title="Журнал">
         {deliveries.isLoading ? <p>Загрузка…</p> : null}
         {deliveries.error ? <ErrorText error={deliveries.error} /> : null}
@@ -372,16 +427,18 @@ export function DeliveryPage() {
             <thead><tr><th>Продукт</th><th className="num">Пришло</th><th className="num">Остаток</th><th>Годен до</th><th>Сертификат</th><th></th></tr></thead>
             <tbody>
               {data.batches.map((batch) => {
-                const share = batch.quantityInitial <= 0 ? 0 : Math.max(4, (batch.quantityRemaining / batch.quantityInitial) * 100);
+                const arrived = batch.acceptedQuantity ?? batch.quantityInitial;
+                const share = arrived <= 0 ? 0 : Math.max(4, (batch.quantityRemaining / arrived) * 100);
                 return (
-                  <tr key={batch.id}>
+                  <tr key={batch.id} className={batch.acceptedQuantity === 0 ? "is-skip" : ""}>
                     <td>
                       <Link to={`/stock/${batch.productId}`} className="rep-person">
                         <span className="rep-dot" style={{ background: "var(--amber)" }} />
                         <span>{batch.productName}</span>
                       </Link>
+                      {batch.acceptedQuantity === 0 && batch.kitchenNote ? <p className="reason">{batch.kitchenNote}</p> : null}
                     </td>
-                    <td className="num"><Qty value={batch.quantityInitial} unit={batch.unit} /></td>
+                    <td className="num">{batch.acceptedQuantity === 0 ? "не взяли" : <Qty value={arrived} unit={batch.unit} />}</td>
                     <td className="num">
                       <div className="rep-money">
                         <strong><Qty value={batch.quantityRemaining} unit={batch.unit} /></strong>

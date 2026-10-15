@@ -52,6 +52,14 @@ export function DishTile({
   return <article className={classes}>{inner}</article>;
 }
 
+export function formatExpiry(iso: string) {
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Moscow" }).format(new Date(iso));
+}
+
+export function expiryInputValue(iso: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+}
+
 export function formatWhen(iso: string) {
   return new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",

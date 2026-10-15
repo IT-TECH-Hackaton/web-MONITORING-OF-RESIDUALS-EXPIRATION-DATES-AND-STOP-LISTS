@@ -39,6 +39,7 @@ public static class DependencyInjection
         services.AddScoped<ShiftService>();
         services.AddScoped<WriteOffService>();
         services.AddScoped<ReportService>();
+        services.AddScoped<StaffService>();
         services.AddScoped<DbSeeder>();
         return services;
     }

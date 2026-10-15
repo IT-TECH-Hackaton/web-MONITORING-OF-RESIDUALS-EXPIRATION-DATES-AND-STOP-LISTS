@@ -26,7 +26,12 @@ export function OrdersPage() {
                   <td>{formatWhen(order.createdAt)}</td>
                   <td>{order.tableNumber ?? "—"}</td>
                   <td>{order.createdByLogin}</td>
-                  <td>{order.items.map((item) => `${item.dishName} × ${item.portions}`).join(", ")}</td>
+                  <td>
+                    {order.items.map((item) => `${item.dishName} × ${item.portions}`).join(", ")}
+                    {order.writeOffs && order.writeOffs.length > 0 ? (
+                      <p className="reason">{order.writeOffs.map((line) => `${line.productName} ${line.before} − ${line.quantity} = ${line.after}`).join("; ")}</p>
+                    ) : null}
+                  </td>
                   <td><span className={`pill pill-${order.status.toLowerCase()}`}>{order.status === "Accepted" ? "Принят" : "Отказ"}</span></td>
                   <td className="reason">{order.rejectionReason ?? "—"}</td>
                 </tr>

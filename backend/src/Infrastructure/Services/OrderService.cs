@@ -186,6 +186,7 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
         foreach (var allocation in outcome.Lines)
         {
             var batch = byId[allocation.BatchId];
+            var before = batch.QuantityRemaining;
             batch.QuantityRemaining -= allocation.Quantity;
             if (batch.QuantityRemaining <= 0)
             {
@@ -200,6 +201,7 @@ public sealed class OrderService(AppDbContext db, IClock clock, StockReadModel r
                 OrderId = order.Id,
                 Type = MovementType.OrderWriteOff,
                 Quantity = allocation.Quantity,
+                QuantityBefore = before,
                 CreatedAt = now,
             });
         }

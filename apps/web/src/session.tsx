@@ -1,5 +1,7 @@
 import { createClient, type ApiClient, type Session } from "@repo/contracts";
 import { bindLive, connectLive, LiveEvents } from "@repo/realtime";
+import { chatPeer, chatView, noteChatMessage, noteDirect } from "./chat";
+import { pushNotice } from "./notices";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -55,19 +57,45 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!session?.accessToken) return;
+    const supplyOnly = session.role === "Supply";
     const connection = connectLive(apiBaseUrl, () => memory.session?.accessToken ?? "");
+    const onChat = (payload: { channel?: "Staff" | "System" | "Supply"; text?: string; authorId?: string; recipientId?: string | null }) => {
+      void queryClient.invalidateQueries({ queryKey: ["chat"] });
+      if (payload.recipientId && payload.authorId) {
+        const me = memory.session?.userId;
+        const peer = payload.authorId === me ? payload.recipientId : payload.authorId;
+        if (!(chatView() === "Direct" && chatPeer() === peer)) noteDirect(peer);
+        return;
+      }
+      const channel = payload.channel ?? "Staff";
+      if (channel === "System" && payload.text && !supplyOnly) pushNotice(payload.text);
+      if (chatView() !== channel) noteChatMessage(channel);
+    };
+    if (supplyOnly) {
+      connection.on(LiveEvents.chatMessage, onChat);
+      return bindLive(connection);
+    }
     const refresh = () => {
-      for (const key of ["dashboard", "stock", "batches", "stop-list", "priority", "hot-offers", "orders", "deliveries", "purchase-lines", "write-offs", "deficits", "weekly-forecast", "spend", "kitchen", "reports", "shift-current", "shift-journal"]) {
+      for (const key of ["dashboard", "stock", "batches", "stop-list", "priority", "hot-offers", "orders", "deliveries", "purchase-lines", "supply-order", "intake", "write-offs", "deficits", "weekly-forecast", "spend", "kitchen", "reports", "shift-current", "shift-journal", "pending-write-offs", "chat", "staff-pending"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     };
     connection.on(LiveEvents.kitchenUpdated, refresh);
-    connection.on(LiveEvents.stockChanged, refresh);
-    connection.on(LiveEvents.batchExpiring, refresh);
-    connection.on(LiveEvents.batchExpired, refresh);
+    connection.on(LiveEvents.stockChanged, (payload: { depleted?: string[] }) => {
+      refresh();
+      for (const name of payload.depleted ?? []) pushNotice(`${name} закончился`);
+    });
+    connection.on(LiveEvents.batchExpiring, (payload: { batches?: { productName: string }[] }) => {
+      refresh();
+      for (const batch of payload.batches ?? []) pushNotice(`${batch.productName}: скоро срок`);
+    });
+    connection.on(LiveEvents.batchExpired, () => {
+      refresh();
+    });
     connection.on(LiveEvents.stopListUpdated, refresh);
     connection.on(LiveEvents.hotOffersUpdated, refresh);
     connection.on(LiveEvents.shiftUpdated, refresh);
+    connection.on(LiveEvents.chatMessage, onChat);
     return bindLive(connection);
   }, [queryClient, session?.accessToken, session?.role]);
 

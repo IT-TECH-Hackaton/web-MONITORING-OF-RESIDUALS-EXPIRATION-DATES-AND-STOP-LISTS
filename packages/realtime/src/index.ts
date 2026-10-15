@@ -9,6 +9,7 @@ export const LiveEvents = {
   orderDecided: "order.decided",
   kitchenUpdated: "kitchen.updated",
   shiftUpdated: "shift.updated",
+  chatMessage: "chat.message",
 } as const;
 
 export type StockChangedPayload = { productIds: string[] };

@@ -24,11 +24,16 @@ import { FloorMenuPage, FloorOrderPage, FloorShell } from "./pages/Floor";
 import { IntakePage } from "./pages/Intake";
 import { DishesPage } from "./pages/Dishes";
 import { LoginPage } from "./pages/Login";
+import { KitchenChatPage, useChatUnread } from "./chat";
+import { KitchenIntakePage } from "./pages/KitchenIntake";
 import { KitchenPage } from "./pages/Kitchen";
+import { SupplyPage } from "./pages/Supply";
 import { OffersPage } from "./pages/Offers";
 import { OrdersPage } from "./pages/Orders";
 import { ReportsPage } from "./pages/Reports";
 import { StockPage, StockProductPage } from "./pages/Stock";
+import { TeamPage } from "./pages/Team";
+import { LiveNotices } from "./notices";
 import { useSession } from "./session";
 import { ThemeToggle } from "./theme";
 
@@ -40,19 +45,24 @@ const managerLinks = [
   ["/orders", "Заказы"],
   ["/analytics", "Аналитика"],
   ["/reports", "Отчёты"],
+  ["/team", "Команда"],
 ];
 
-const kitchenLinks = [["/kitchen", "Смена"]];
+const kitchenLinks = [["/kitchen", "Смена"], ["/kitchen/intake", "Приёмка"], ["/kitchen/chat", "Чат"]];
+const supplyLinks = [["/supply", "Предложение"]];
 
 function Shell() {
   const { session, client } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
+  const unread = useChatUnread();
   if (!session) return <Navigate to="/login" replace />;
   if (session.role === "Waiter") return <Navigate to="/floor" replace />;
-  if (session.role === "Kitchen" && location.pathname !== "/kitchen") return <Navigate to="/kitchen" replace />;
+  if (session.role === "Kitchen" && !location.pathname.startsWith("/kitchen")) return <Navigate to="/kitchen" replace />;
+  if (session.role === "Supply" && location.pathname !== "/supply") return <Navigate to="/supply" replace />;
 
-  const links = session.role === "Kitchen" ? kitchenLinks : managerLinks;
+  const links = session.role === "Kitchen" ? kitchenLinks : session.role === "Supply" ? supplyLinks : managerLinks;
+  const badge = session.role === "Kitchen" ? "Смена кухни" : session.role === "Supply" ? "Предложение" : "Стоп, сроки, склад";
   return (
     <TooltipProvider>
       <SidebarProvider>
@@ -60,7 +70,7 @@ function Shell() {
           <SidebarHeader>
             <div className="flex flex-col gap-2 px-2 py-1">
               <strong className="text-sm">Остатки</strong>
-              <Badge variant="secondary">{session.role === "Kitchen" ? "Смена кухни" : "Стоп, сроки, склад"}</Badge>
+              <Badge variant="secondary">{badge}</Badge>
             </div>
           </SidebarHeader>
           <SidebarContent>
@@ -68,15 +78,20 @@ function Shell() {
               <SidebarGroupContent>
                 <SidebarMenu>
                   {links.map(([to, label]) => {
-                    const active = to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
+                    const exact = to === "/" || to === "/kitchen";
+                    const active = exact ? location.pathname === to : location.pathname.startsWith(to);
+                    const badge = unread > 0 && (to === "/kitchen/chat" || to === "/team");
                     return (
                       <SidebarMenuItem key={to}>
                         <SidebarMenuButton
                           size="lg"
                           isActive={active}
-                          render={<NavLink to={to} end={to === "/"} />}
+                          render={<NavLink to={to} end={exact} />}
                         >
-                          {label}
+                          <span className="flex w-full items-center justify-between gap-2">
+                            {label}
+                            {badge ? <span className="chat-unread">{unread > 9 ? "9+" : unread}</span> : null}
+                          </span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     );
@@ -99,6 +114,7 @@ function Shell() {
             <span className="text-sm font-medium">Остатки</span>
           </header>
           <div className="main">
+            <LiveNotices />
             <Outlet />
           </div>
         </SidebarInset>
@@ -129,6 +145,9 @@ export function App() {
       <Route element={<Shell />}>
         <Route index element={<DashboardPage />} />
         <Route path="kitchen" element={<KitchenPage />} />
+        <Route path="kitchen/intake" element={<KitchenIntakePage />} />
+        <Route path="kitchen/chat" element={<KitchenChatPage />} />
+        <Route path="supply" element={<SupplyPage />} />
         <Route path="deliveries" element={<DeliveriesPage />} />
         <Route path="intake" element={<IntakePage />} />
         <Route path="deliveries/:id" element={<DeliveryPage />} />
@@ -139,6 +158,7 @@ export function App() {
         <Route path="orders" element={<OrdersPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="reports" element={<ReportsPage />} />
+        <Route path="team" element={<TeamPage />} />
       </Route>
     </Routes>
   );

@@ -29,6 +29,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<decimal?>("AcceptedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)")
+                        .HasColumnName("accepted_quantity");
+
                     b.Property<DateTime?>("CertificateExpiresAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("certificate_expires_at");
@@ -104,6 +109,8 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
 
                     b.ToTable("batches", null, t =>
                         {
+                            t.HasCheckConstraint("ck_batches_accepted_quantity", "accepted_quantity IS NULL OR (accepted_quantity >= 0 AND accepted_quantity <= quantity_initial)");
+
                             t.HasCheckConstraint("ck_batches_quantity_initial", "quantity_initial > 0");
 
                             t.HasCheckConstraint("ck_batches_quantity_remaining", "quantity_remaining >= 0");
@@ -157,6 +164,10 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTime?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -170,6 +181,12 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ReceivedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("received_by");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("stage");
 
                     b.Property<string>("Supplier")
                         .HasMaxLength(160)
@@ -534,6 +551,54 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.ToTable("shift_history", (string)null);
                 });
 
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.StaffMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AuthorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_id");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Staff")
+                        .HasColumnName("channel");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("RecipientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recipient_id");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("text");
+
+                    b.HasKey("Id")
+                        .HasName("pk_staff_messages");
+
+                    b.HasIndex("AuthorId")
+                        .HasDatabaseName("ix_staff_messages_author_id");
+
+                    b.HasIndex("RecipientId")
+                        .HasDatabaseName("ix_staff_messages_recipient_id");
+
+                    b.HasIndex("Channel", "CreatedAt")
+                        .HasDatabaseName("ix_staff_messages_channel_created_at");
+
+                    b.ToTable("staff_messages", (string)null);
+                });
+
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.StockMovement", b =>
                 {
                     b.Property<Guid>("Id")
@@ -558,6 +623,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(18,3)")
                         .HasColumnName("quantity");
 
+                    b.Property<decimal?>("QuantityBefore")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)")
+                        .HasColumnName("quantity_before");
+
                     b.Property<string>("Reason")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
@@ -578,6 +648,9 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.HasIndex("CreatedAt")
                         .HasDatabaseName("ix_stock_movements_created_at");
 
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("ix_stock_movements_order_id");
+
                     b.ToTable("stock_movements", null, t =>
                         {
                             t.HasCheckConstraint("ck_stock_movements_quantity", "quantity > 0");
@@ -590,6 +663,10 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<bool>("Approved")
+                        .HasColumnType("boolean")
+                        .HasColumnName("approved");
 
                     b.Property<string>("DisplayName")
                         .IsRequired()
@@ -608,6 +685,11 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
                         .HasColumnName("password_hash");
+
+                    b.Property<string>("RefreshTokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("refresh_token_hash");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -795,6 +877,23 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                     b.Navigation("Dish");
                 });
 
+            modelBuilder.Entity("Monitoring.Infrastructure.Persistence.StaffMessage", b =>
+                {
+                    b.HasOne("Monitoring.Infrastructure.Persistence.UserAccount", "Author")
+                        .WithMany()
+                        .HasForeignKey("AuthorId")
+                        .HasConstraintName("fk_staff_messages_users_author_id");
+
+                    b.HasOne("Monitoring.Infrastructure.Persistence.UserAccount", "Recipient")
+                        .WithMany()
+                        .HasForeignKey("RecipientId")
+                        .HasConstraintName("fk_staff_messages_users_recipient_id");
+
+                    b.Navigation("Author");
+
+                    b.Navigation("Recipient");
+                });
+
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.StockMovement", b =>
                 {
                     b.HasOne("Monitoring.Infrastructure.Persistence.Batch", "Batch")
@@ -804,7 +903,14 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_stock_movements_batches_batch_id");
 
+                    b.HasOne("Monitoring.Infrastructure.Persistence.CustomerOrder", "Order")
+                        .WithMany("Movements")
+                        .HasForeignKey("OrderId")
+                        .HasConstraintName("fk_stock_movements_orders_order_id");
+
                     b.Navigation("Batch");
+
+                    b.Navigation("Order");
                 });
 
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.Batch", b =>
@@ -815,6 +921,8 @@ namespace Monitoring.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Monitoring.Infrastructure.Persistence.CustomerOrder", b =>
                 {
                     b.Navigation("Items");
+
+                    b.Navigation("Movements");
 
                     b.Navigation("Shortages");
                 });

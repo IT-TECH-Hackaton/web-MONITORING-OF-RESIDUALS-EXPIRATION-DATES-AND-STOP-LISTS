@@ -1,9 +1,10 @@
 export type Unit = "G" | "Ml" | "Pcs";
-export type BatchStatus = "Active" | "Depleted" | "Expired";
+export type BatchStatus = "Arrived" | "Active" | "PendingWriteOff" | "Depleted" | "Expired";
 export type OrderStatus = "Accepted" | "Rejected";
 export type Freshness = "Ok" | "Expiring" | "Expired" | "Empty";
 export type MovementType = "Receipt" | "OrderWriteOff" | "ExpiryWriteOff" | "KitchenWriteOff";
-export type Role = "Manager" | "Waiter" | "Kitchen";
+export type Role = "Manager" | "Waiter" | "Kitchen" | "Supply";
+export type DeliveryStage = "Parked" | "Receiving" | "KitchenDone" | "Accepted";
 export type KitchenStatus = "Queued" | "Cooking" | "Ready";
 
 export type Session = {
@@ -40,6 +41,7 @@ export type Order = {
   items: OrderLine[];
   shortages: Shortage[];
   tableNumber: string | null;
+  writeOffs?: { productName: string; before: number; quantity: number; after: number }[];
 };
 
 export type Batch = {
@@ -59,6 +61,8 @@ export type Batch = {
   certificateNumber?: string | null;
   certificateIssuer?: string | null;
   certificateExpiresAt?: string | null;
+  acceptedQuantity?: number | null;
+  kitchenNote?: string | null;
 };
 
 export type Delivery = {
@@ -66,6 +70,8 @@ export type Delivery = {
   number: string;
   createdAt: string;
   supplier?: string | null;
+  acceptedAt?: string | null;
+  stage?: DeliveryStage;
   batches: Batch[];
 };
 
@@ -186,6 +192,25 @@ export type ShiftJournalRow = {
   openedBy: string;
   closedBy: string | null;
   isOpen: boolean;
+};
+
+export type StaffApplication = {
+  id: string;
+  login: string;
+  displayName: string;
+  role: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  author: string;
+  role: string;
+  text: string;
+  at: string;
+  channel?: "Staff" | "System" | "Supply";
+  authorId?: string | null;
+  recipientId?: string | null;
+  recipientName?: string | null;
 };
 
 export type ShiftCurrent = {

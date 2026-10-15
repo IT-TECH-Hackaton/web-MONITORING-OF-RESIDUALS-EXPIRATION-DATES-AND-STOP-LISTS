@@ -2,6 +2,7 @@ import { ApiError, formatHours, formatQty, stopWhy, type Product, type PurchaseS
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parsePortionPhrase, type PortionProposal } from "../portionVoice";
+import { PendingWriteOffs } from "../pending";
 import { useSession } from "../session";
 import { DishTile, Empty, formatWhen, isLow, Panel } from "../ui";
 
@@ -270,6 +271,7 @@ export function KitchenPage() {
         </div>
       </div>
       {hint ? <p className="hint">{hint}</p> : null}
+      <PendingWriteOffs />
       <div className="shift-toolbar">
         <div className="shift-filters" role="tablist" aria-label="Фильтр плиток">
           {FILTERS.map((item) => (

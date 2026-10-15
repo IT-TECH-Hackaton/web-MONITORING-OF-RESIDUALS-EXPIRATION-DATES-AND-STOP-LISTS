@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useCart } from "../cart";
+import { ChatBox } from "../chat";
 import { useSession } from "../session";
 import { ThemeToggle } from "../theme";
 import { Empty, isLow } from "../ui";
@@ -185,6 +186,7 @@ export function FloorShell() {
   const { session, client } = useSession();
   const cart = useCart();
   const navigate = useNavigate();
+  const [chatOpen, setChatOpen] = useState(false);
   return (
     <div className="floor">
       <header className="floor-head">
@@ -200,6 +202,12 @@ export function FloorShell() {
       <main className="floor-body">
         <Outlet />
       </main>
+      {chatOpen ? (
+        <section className="floor-chat">
+          <ChatBox />
+        </section>
+      ) : null}
+      <button type="button" className="floor-chat-btn" aria-pressed={chatOpen} aria-label="Чат смены" onClick={() => setChatOpen((current) => !current)}>Чат</button>
       <FloorListen onSave={(text) => cart.addNote(text)} />
       <nav className="floor-tabs">
         <NavLink to="/floor" end>Зал</NavLink>

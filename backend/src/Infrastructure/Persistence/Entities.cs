@@ -10,6 +10,25 @@ public sealed class UserAccount
     public string DisplayName { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public UserRole Role { get; set; }
+    /// <summary>Ложный, пока менеджер не подтвердил заявку. Такие в систему не входят.</summary>
+    public bool Approved { get; set; } = true;
+    /// <summary>Хеш текущего refresh. Новый вход и выход гасят предыдущий.</summary>
+    public string? RefreshTokenHash { get; set; }
+}
+
+/// <summary>Сообщение чата. Staff — люди. System — порча и срок, автора нет.</summary>
+public sealed class StaffMessage
+{
+    public Guid Id { get; set; }
+    public Guid? AuthorId { get; set; }
+    /// <summary>Кому лично. Пусто — общая лента.</summary>
+    public Guid? RecipientId { get; set; }
+    /// <summary>Staff или System.</summary>
+    public string Channel { get; set; } = "Staff";
+    public string Text { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public UserAccount? Author { get; set; }
+    public UserAccount? Recipient { get; set; }
 }
 
 /// <summary>Сырьё склада. Остаток живёт в партиях, не в этом ряду.</summary>
@@ -54,6 +73,10 @@ public sealed class Delivery
     public string? Supplier { get; set; }
     public Guid? ReceivedBy { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>Пусто, пока итог не подтвердили. Ручная поставка заполняется сразу.</summary>
+    public DateTime? AcceptedAt { get; set; }
+    /// <summary>Приехало, в приёмке, кухня отметила, итог на складе. Ручная поставка сразу Accepted.</summary>
+    public DeliveryStage Stage { get; set; } = DeliveryStage.Accepted;
     public UserAccount? ReceivedByUser { get; set; }
     public List<Batch> Batches { get; set; } = [];
 }
@@ -66,6 +89,8 @@ public sealed class Batch
     public Guid ProductId { get; set; }
     public decimal QuantityInitial { get; set; }
     public decimal QuantityRemaining { get; set; }
+    /// <summary>Сколько кухня взяла. Пусто, пока не решила. Ноль — строку не взяли.</summary>
+    public decimal? AcceptedQuantity { get; set; }
     /// <summary>Рубли за единицу на момент прихода. Себестоимость списания берётся отсюда.</summary>
     public decimal UnitCost { get; set; }
     public DateTime ReceivedAt { get; set; }
@@ -110,6 +135,7 @@ public sealed class CustomerOrder
     public UserAccount CreatedByUser { get; set; } = null!;
     public List<OrderItem> Items { get; set; } = [];
     public List<OrderShortage> Shortages { get; set; } = [];
+    public List<StockMovement> Movements { get; set; } = [];
 }
 
 /// <summary>Строка заказа. KitchenStatus — старая очередь, новый экран смены её не показывает.</summary>
@@ -143,6 +169,9 @@ public sealed class StockMovement
     public Guid Id { get; set; }
     public Guid BatchId { get; set; }
     public Guid? OrderId { get; set; }
+    public CustomerOrder? Order { get; set; }
+    /// <summary>Остаток партии до этого списания. Для строки заказа «было − списали = осталось».</summary>
+    public decimal? QuantityBefore { get; set; }
     public MovementType Type { get; set; }
     public decimal Quantity { get; set; }
     public DateTime CreatedAt { get; set; }

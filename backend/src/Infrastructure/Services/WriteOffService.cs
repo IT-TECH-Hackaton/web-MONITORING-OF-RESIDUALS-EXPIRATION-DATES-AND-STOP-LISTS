@@ -11,7 +11,7 @@ namespace Monitoring.Infrastructure.Services;
 public sealed record WriteOffLine(Guid ProductId, decimal Quantity, Guid? BatchId);
 
 /// <summary>Акт списания сырья. Порции заготовки не трогает.</summary>
-public sealed class WriteOffService(AppDbContext db, IClock clock, StockBroadcaster broadcaster)
+public sealed class WriteOffService(AppDbContext db, IClock clock, StockBroadcaster broadcaster, StaffService staff)
 {
     /// <summary>
     /// Вход: статья и строки (продукт, количество, необязательная партия).
@@ -42,7 +42,8 @@ public sealed class WriteOffService(AppDbContext db, IClock clock, StockBroadcas
             {
                 await LockBatchAsync(batchId, cancellationToken);
                 var batch = await db.Batches.FirstOrDefaultAsync(row => row.Id == batchId && row.ProductId == item.ProductId, cancellationToken);
-                if (batch is null || batch.Status != BatchStatus.Active || batch.ExpiresAt <= clock.UtcNow)
+                var held = batch is not null && batch.Status == BatchStatus.PendingWriteOff && parsed == WriteOffReason.Expiry;
+                if (batch is null || (!held && (batch.Status != BatchStatus.Active || batch.ExpiresAt <= clock.UtcNow)))
                 {
                     return ServiceResult<int>.Bad("Партия для списания не найдена или уже не активна.");
                 }
@@ -82,16 +83,45 @@ public sealed class WriteOffService(AppDbContext db, IClock clock, StockBroadcas
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await broadcaster.PublishAsync(new StockChange(touched, [], [], null, null, null), cancellationToken);
+        if (parsed == WriteOffReason.Spoilage)
+        {
+            var ids = items.Select(item => item.ProductId).Distinct().ToList();
+            var products = await db.Products.AsNoTracking()
+                .Where(product => ids.Contains(product.Id))
+                .ToDictionaryAsync(product => product.Id, cancellationToken);
+            foreach (var item in items)
+            {
+                products.TryGetValue(item.ProductId, out var product);
+                var name = product?.Name ?? "Продукт";
+                var unit = product?.Unit ?? Unit.Pcs;
+                await staff.PostSystemAsync($"{name}, {Qty(item.Quantity, unit)}: порча, списано со склада.", cancellationToken);
+            }
+        }
+
         return ServiceResult<int>.Ok(items.Count);
+    }
+
+    private static string Qty(decimal quantity, Unit unit)
+    {
+        var label = unit switch
+        {
+            Unit.G => "г",
+            Unit.Ml => "мл",
+            _ => "шт",
+        };
+        return $"{quantity:0.###} {label}";
     }
 
     private void Deduct(Batch batch, decimal quantity, MovementType type, WriteOffReason reason)
     {
+        var before = batch.QuantityRemaining;
         batch.QuantityRemaining -= quantity;
         if (batch.QuantityRemaining <= 0)
         {
             batch.QuantityRemaining = 0;
-            batch.Status = BatchStatus.Depleted;
+            batch.Status = batch.Status == BatchStatus.PendingWriteOff || reason == WriteOffReason.Expiry
+                ? BatchStatus.Expired
+                : BatchStatus.Depleted;
         }
 
         db.StockMovements.Add(new StockMovement
@@ -101,6 +131,7 @@ public sealed class WriteOffService(AppDbContext db, IClock clock, StockBroadcas
             Type = type,
             Reason = reason.ToString(),
             Quantity = quantity,
+            QuantityBefore = before,
             CreatedAt = clock.UtcNow,
         });
     }

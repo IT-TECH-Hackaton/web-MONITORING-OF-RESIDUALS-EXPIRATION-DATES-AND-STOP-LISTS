@@ -1,9 +1,9 @@
-import type { Freshness, Unit } from "@repo/contracts";
+import type { Batch, Freshness, Unit } from "@repo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useSession } from "../session";
-import { Empty, ErrorText, formatWhen, FreshnessPill, Hours, Panel, Qty } from "../ui";
+import { Empty, ErrorText, formatExpiry, FreshnessPill, Hours, Panel, Qty } from "../ui";
 import { ExpiredWriteOffTable } from "./Dashboard";
 
 const freshnessColor: Record<Freshness, string> = {
@@ -23,8 +23,14 @@ function purchaseLabel(price: number, unit: Unit) {
   return `${rub(price)} / шт`;
 }
 
+function receivedQty(batch: Batch) {
+  if (batch.acceptedQuantity === 0 || batch.status === "Arrived") return 0;
+  return batch.acceptedQuantity ?? batch.quantityInitial;
+}
+
 export function StockPage() {
   const { client } = useSession();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const stock = useQuery({ queryKey: ["stock"], queryFn: () => client.stock() });
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: () => client.dashboard() });
@@ -50,7 +56,7 @@ export function StockPage() {
       <header className="rep-head">
         <div>
           <h1>Склад</h1>
-          <p>Холодильник заведения. Карточку продукта заводят до прихода машины.</p>
+          <p>Нажмите продукт — откроется карточка: какими партиями пришло, сколько и до какого числа.</p>
         </div>
       </header>
       <Panel title="Новый продукт">
@@ -83,10 +89,10 @@ export function StockPage() {
         {visible.length > 0 ? (
           <div className="rep-scroll">
             <table className="rep-table rep-staff">
-              <thead><tr><th>Продукт</th><th className="num">Доступно</th><th className="num">Цена закупки</th><th>Ближайший срок</th><th>Осталось</th><th></th></tr></thead>
+              <thead><tr><th>Продукт</th><th className="num">Доступно</th><th className="num">Цена закупки</th><th>Ближайший срок</th><th>Осталось</th><th></th><th></th></tr></thead>
               <tbody>
                 {visible.map((item) => (
-                  <tr key={item.productId}>
+                  <tr key={item.productId} className="stock-row" onClick={() => navigate(`/stock/${item.productId}`)}>
                     <td>
                       <Link to={`/stock/${item.productId}`} className="rep-person">
                         <span className="rep-dot" style={{ background: freshnessColor[item.freshness] }} />
@@ -104,9 +110,12 @@ export function StockPage() {
                       </div>
                     </td>
                     <td className={item.purchasePrice === 0 ? "num is-zero" : "num"}>{purchaseLabel(item.purchasePrice, item.unit)}</td>
-                    <td className={item.nearestExpiry ? undefined : "is-zero"}>{item.nearestExpiry ? formatWhen(item.nearestExpiry) : "—"}</td>
+                    <td className={item.nearestExpiry ? undefined : "is-zero"}>{item.nearestExpiry ? formatExpiry(item.nearestExpiry) : "—"}</td>
                     <td><Hours value={item.hoursLeft} /></td>
                     <td><FreshnessPill freshness={item.freshness} /></td>
+                    <td>
+                      <Link to={`/stock/${item.productId}`} className="btn-ghost stock-open" onClick={(event) => event.stopPropagation()}>Партии</Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -122,27 +131,36 @@ export function StockProductPage() {
   const { productId = "" } = useParams();
   const { client } = useSession();
   const batches = useQuery({ queryKey: ["batches", productId], queryFn: () => client.batches(productId), enabled: Boolean(productId) });
-  const name = batches.data?.[0]?.productName ?? "Партии";
+  const stock = useQuery({ queryKey: ["stock"], queryFn: () => client.stock() });
+  const item = stock.data?.find((row) => row.productId === productId);
+  const arrived = (batches.data ?? []).filter((batch) => receivedQty(batch) > 0);
+  const waiting = (batches.data ?? []).filter((batch) => batch.status === "Arrived");
+  const name = item?.name ?? batches.data?.[0]?.productName ?? "Продукт";
+  const unit = item?.unit ?? batches.data?.[0]?.unit;
   return (
     <div className="rep">
       <header className="rep-head">
         <div>
           <h1>{name}</h1>
-          <p>Списание идёт с партии, у которой срок кончается раньше.</p>
+          <p>
+            {item && unit ? <>Сейчас доступно <Qty value={item.available} unit={unit} />. </> : null}
+            Партии, которые уже на складе: сколько пришло и до какого числа годно. Раньше кончается срок — раньше уходит в готовку.
+          </p>
         </div>
         <Link to="/stock" className="btn-ghost">Весь склад</Link>
       </header>
       <Panel title="Партии">
         {batches.isLoading ? <p>Загрузка…</p> : null}
         {batches.error ? <ErrorText error={batches.error} /> : null}
-        {batches.data?.length === 0 ? <Empty>Партий нет.</Empty> : null}
-        {batches.data && batches.data.length > 0 ? (
+        {!batches.isLoading && arrived.length === 0 ? <Empty>На склад ещё ничего не пришло.</Empty> : null}
+        {arrived.length > 0 ? (
           <div className="rep-scroll">
             <table className="rep-table rep-staff">
-              <thead><tr><th>Поставка</th><th className="num">Пришло</th><th className="num">Остаток</th><th>Годен до</th><th>Осталось</th><th>Статус</th></tr></thead>
+              <thead><tr><th>Поставка</th><th className="num">Пришло</th><th className="num">Осталось</th><th>Годен до</th><th></th></tr></thead>
               <tbody>
-                {batches.data.map((batch) => {
-                  const share = batch.quantityInitial <= 0 ? 0 : Math.max(4, (batch.quantityRemaining / batch.quantityInitial) * 100);
+                {arrived.map((batch) => {
+                  const came = receivedQty(batch);
+                  const share = came <= 0 ? 0 : Math.max(4, (batch.quantityRemaining / came) * 100);
                   return (
                     <tr key={batch.id}>
                       <td>
@@ -151,7 +169,7 @@ export function StockProductPage() {
                           <span>{batch.deliveryNumber}</span>
                         </Link>
                       </td>
-                      <td className="num"><Qty value={batch.quantityInitial} unit={batch.unit} /></td>
+                      <td className="num"><Qty value={came} unit={batch.unit} /></td>
                       <td className="num">
                         <div className="rep-money">
                           <strong className={batch.quantityRemaining === 0 ? "is-zero" : undefined}><Qty value={batch.quantityRemaining} unit={batch.unit} /></strong>
@@ -162,8 +180,7 @@ export function StockProductPage() {
                           ) : null}
                         </div>
                       </td>
-                      <td>{formatWhen(batch.expiresAt)}</td>
-                      <td><Hours value={batch.hoursLeft} /></td>
+                      <td>{formatExpiry(batch.expiresAt)}</td>
                       <td><FreshnessPill freshness={batch.freshness} /></td>
                     </tr>
                   );
@@ -171,6 +188,9 @@ export function StockProductPage() {
               </tbody>
             </table>
           </div>
+        ) : null}
+        {waiting.length > 0 ? (
+          <p className="reason">Ещё не на складе: {waiting.map((batch) => `${batch.deliveryNumber}, заявлено ${batch.quantityInitial}`).join("; ")}. Срок станет складским после итога менеджера.</p>
         ) : null}
       </Panel>
     </div>

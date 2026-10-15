@@ -1,4 +1,4 @@
-import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Session, type ShiftCurrent, type ShiftHistoryEntry, type ShiftJournalRow, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
+import { ApiError, type Dashboard, type Deficit, type Delivery, type DeliveryLineInput, type Dish, type HotOffer, type KitchenBoard, type KitchenStatus, type Order, type Product, type PurchaseDraft, type PurchaseLine, type QrIntakeResult, type Session, type ShiftCurrent, type StaffApplication, type ChatMessage, type ShiftHistoryEntry, type ShiftJournalRow, type StockItem, type StopEntry, type Unit, type MoneyReport, type SpendReport, type WeeklyForecastReport, type WriteOff, type WriteOffReason, type Batch } from "./types";
 
 export type TokenStore = {
   getAccess: () => string | null;
@@ -52,9 +52,16 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
 
   async function json<T>(response: Response): Promise<T> {
     const text = await response.text();
-    const body = text ? JSON.parse(text) : null;
+    let body: { message?: string; rejectionReason?: string; items?: unknown } | null = null;
+    if (text) {
+      try {
+        body = JSON.parse(text) as { message?: string; rejectionReason?: string; items?: unknown };
+      } catch {
+        throw new ApiError(response.ok ? "Сервер ответил не тем форматом" : "Запрос не выполнен", response.status);
+      }
+    }
     if (!response.ok) {
-      throw new ApiError(body?.message ?? body?.rejectionReason ?? "Запрос не выполнен", response.status, body?.items ? body : undefined);
+      throw new ApiError(body?.message ?? body?.rejectionReason ?? "Запрос не выполнен", response.status, body?.items ? body as Order : undefined);
     }
     return body as T;
   }
@@ -72,9 +79,26 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
       options.tokens.setSession(session);
       return session;
     },
-    logout() {
+    async logout() {
+      try {
+        await request("/api/auth/logout", { method: "POST" });
+      } catch {
+        // Сессия на экране гасится в любом случае.
+      }
       options.tokens.setSession(null);
     },
+    register: (input: { login: string; password: string; displayName: string; role: "Waiter" | "Kitchen" }) =>
+      request("/api/auth/register", { method: "POST", body: JSON.stringify(input) }).then((response) => json<{ message: string }>(response)),
+    pendingStaff: () => request("/api/staff/pending").then((response) => json<StaffApplication[]>(response)),
+    approveStaff: (id: string) => request(`/api/staff/${id}/approve`, { method: "POST" }).then((response) => json<StaffApplication>(response)),
+    rejectStaff: (id: string) => request(`/api/staff/${id}/reject`, { method: "POST" }).then((response) => json<{ message: string }>(response)),
+    chat: () => request("/api/chat").then((response) => json<ChatMessage[]>(response)),
+    chatPeople: () => request("/api/chat/people").then((response) => json<StaffApplication[]>(response)),
+    postChat: (text: string, recipientId?: string | null, toSupplier = false) =>
+      request("/api/chat", { method: "POST", body: JSON.stringify({ text, recipientId: recipientId ?? null, toSupplier }) }).then((response) => json<ChatMessage>(response)),
+    supplyCatalog: () => request("/api/supply/catalog").then((response) => json<{ id: string; name: string; unit: Unit }[]>(response)),
+    sendSupplyExtra: (items: { productId: string; quantity: number; expiresAt: string }[]) =>
+      request("/api/supply/extra", { method: "POST", body: JSON.stringify({ items }) }).then((response) => json<Delivery>(response)),
     products: () => request("/api/products").then((response) => json<Product[]>(response)),
     createProduct: (name: string, unit: Unit) =>
       request("/api/products", { method: "POST", body: JSON.stringify({ name, unit }) }).then((response) => json<Product>(response)),
@@ -90,6 +114,15 @@ export function createClient(options: { baseUrl: string | (() => string); tokens
     delivery: (id: string) => request(`/api/deliveries/${id}`).then((response) => json<Delivery>(response)),
     createDelivery: (input: { id: string; number: string; createdAt?: string | null; supplier?: string | null; items: DeliveryLineInput[] }) =>
       request("/api/deliveries", { method: "POST", body: JSON.stringify(input) }).then((response) => json<Delivery>(response)),
+    acceptDelivery: (id: string) => request(`/api/deliveries/${id}/accept`, { method: "POST" }).then((response) => json<Delivery>(response)),
+    sendOrderAsDelivery: () => request("/api/deliveries/from-order", { method: "POST" }).then((response) => json<Delivery>(response)),
+    startReceiving: (id: string) => request(`/api/deliveries/${id}/receive`, { method: "POST" }).then((response) => json<Delivery>(response)),
+    intakeDeliveries: () => request("/api/deliveries/intake").then((response) => json<Delivery[]>(response)),
+    confirmIntake: (id: string, lines: { batchId: string; quantity: number; expiresAt?: string | null; note?: string | null }[]) =>
+      request(`/api/deliveries/${id}/intake`, { method: "POST", body: JSON.stringify({ lines }) }).then((response) => json<Delivery>(response)),
+    supplyOrder: () => request("/api/supply/order").then((response) => json<PurchaseLine[]>(response)),
+    sendSupply: () => request("/api/supply/send", { method: "POST" }).then((response) => json<Delivery>(response)),
+    pendingWriteOffs: () => request("/api/stock/pending-write-offs").then((response) => json<Batch[]>(response)),
     purchaseLines: (open = true) =>
       request(`/api/purchase-lines?open=${open}`).then((response) => json<PurchaseLine[]>(response)),
     addPurchaseLine: (input: { productId: string; quantity: number; note?: string | null }) =>

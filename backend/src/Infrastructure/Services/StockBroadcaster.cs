@@ -19,17 +19,18 @@ public sealed class StockBroadcaster(StockReadModel readModel, ILiveNotifier not
     {
         if (change.ProductIds.Count > 0)
         {
-            await notifier.StockChanged(change.ProductIds, cancellationToken);
+            var depleted = await readModel.DepletedNamesAsync(change.ProductIds, cancellationToken);
+            await notifier.StockChanged(change.ProductIds, depleted, cancellationToken);
         }
 
         if (change.ExpiringBatchIds.Count > 0)
         {
-            await notifier.BatchesExpiring(change.ExpiringBatchIds, cancellationToken);
+            await notifier.BatchesExpiring(await readModel.BatchNoticesAsync(change.ExpiringBatchIds, cancellationToken), cancellationToken);
         }
 
         if (change.ExpiredBatchIds.Count > 0)
         {
-            await notifier.BatchesExpired(change.ExpiredBatchIds, cancellationToken);
+            await notifier.BatchesExpired(await readModel.BatchNoticesAsync(change.ExpiredBatchIds, cancellationToken), cancellationToken);
         }
 
         await notifier.StopListUpdated(await readModel.StopListAsync(cancellationToken), cancellationToken);

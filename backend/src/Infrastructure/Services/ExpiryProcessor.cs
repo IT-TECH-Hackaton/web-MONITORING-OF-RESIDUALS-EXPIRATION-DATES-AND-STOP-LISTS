@@ -16,39 +16,36 @@ public sealed class ExpiryWatchState
 }
 
 /// <summary>Фоновый проход срока. Сам вызывается воркером, не ручкой.</summary>
-public sealed class ExpiryProcessor(AppDbContext db, IClock clock, StockBroadcaster broadcaster, ExpiryWatchState state)
+public sealed class ExpiryProcessor(AppDbContext db, IClock clock, StockBroadcaster broadcaster, ExpiryWatchState state, StaffService staff)
 {
     /// <summary>
-    /// Списывает просроченные активные партии статьёй Expiry и предупреждает о тех, что истекают в ближайшие сутки.
-    /// Повторно уже объявленную партию не орёт.
+    /// Просроченную активную партию ставит под списание. Остаток не обнуляет: списывает человек.
+    /// Предупреждает о тех, что истекают в ближайшие сутки. Повторно уже объявленную партию не орёт.
     /// </summary>
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
         var horizon = now.AddHours(FreshnessRules.WarningHours);
         var expired = await db.Batches
+            .Include(batch => batch.Product)
             .Where(batch => batch.Status == BatchStatus.Active && batch.QuantityRemaining > 0 && batch.ExpiresAt <= now)
             .ToListAsync(cancellationToken);
 
+        var notes = new List<StaffMessage>();
         foreach (var batch in expired)
         {
-            db.StockMovements.Add(new StockMovement
-            {
-                Id = Guid.NewGuid(),
-                BatchId = batch.Id,
-                Type = MovementType.ExpiryWriteOff,
-                Reason = nameof(WriteOffReason.Expiry),
-                Quantity = batch.QuantityRemaining,
-                CreatedAt = now,
-            });
-            batch.QuantityRemaining = 0;
-            batch.Status = BatchStatus.Expired;
+            batch.Status = BatchStatus.PendingWriteOff;
             state.Forget(batch.Id);
+            notes.Add(staff.StageSystem($"{batch.Product.Name}, {Qty(batch.QuantityRemaining, batch.Product.Unit)}: порча. Срок вышел, с готовки снят."));
         }
 
         if (expired.Count > 0)
         {
             await db.SaveChangesAsync(cancellationToken);
+            foreach (var note in notes)
+            {
+                await staff.AnnounceAsync(note, cancellationToken);
+            }
         }
 
         var expiringIds = await db.Batches
@@ -74,5 +71,16 @@ public sealed class ExpiryProcessor(AppDbContext db, IClock clock, StockBroadcas
                 null,
                 null),
             cancellationToken);
+    }
+
+    private static string Qty(decimal quantity, Unit unit)
+    {
+        var label = unit switch
+        {
+            Unit.G => "г",
+            Unit.Ml => "мл",
+            _ => "шт",
+        };
+        return $"{quantity:0.###} {label}";
     }
 }

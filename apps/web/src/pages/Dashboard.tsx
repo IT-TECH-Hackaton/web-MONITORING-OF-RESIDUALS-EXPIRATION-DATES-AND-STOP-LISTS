@@ -1,6 +1,7 @@
 import type { ExpiryWriteOffLine } from "@repo/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { PendingWriteOffs } from "../pending";
 import { useSession } from "../session";
 import { DishTile, Empty, ErrorText, formatWhen, FreshnessPill, Hours, Panel, Qty, isLow } from "../ui";
 
@@ -57,6 +58,7 @@ export function DashboardPage() {
           </p>
         </div>
       </div>
+      <PendingWriteOffs />
       <section className="stats stats-five">
         <article className="stat stat-rose"><span>Стоп</span><strong>{stopped.length}</strong></article>
         <article className="stat stat-amber"><span>Мало</span><strong>{low.length}</strong></article>

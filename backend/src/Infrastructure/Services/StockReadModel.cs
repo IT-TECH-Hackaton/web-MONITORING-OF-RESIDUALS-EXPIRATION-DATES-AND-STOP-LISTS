@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Monitoring.Core;
 using Monitoring.Core.Inventory;
+using Monitoring.Core.Live;
 using Monitoring.Core.Time;
 using Monitoring.Infrastructure.Persistence;
 
@@ -455,7 +456,15 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             shortage.Required,
             shortage.Available,
             shortage.Required - shortage.Available)).ToList(),
-        order.TableNumber);
+        order.TableNumber,
+        order.Movements
+            .Where(movement => movement.Type == MovementType.OrderWriteOff && movement.QuantityBefore is decimal)
+            .Select(movement => new OrderWriteOffView(
+                movement.Batch.Product.Name,
+                movement.QuantityBefore!.Value,
+                movement.Quantity,
+                movement.QuantityBefore.Value - movement.Quantity))
+            .ToList());
 
     private async Task<IReadOnlyDictionary<Guid, ProductAvailability>> AvailabilityAsync(CancellationToken cancellationToken)
     {
@@ -535,7 +544,8 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
         db.Orders.AsNoTracking()
             .Include(order => order.CreatedByUser)
             .Include(order => order.Items).ThenInclude(item => item.Dish)
-            .Include(order => order.Shortages).ThenInclude(shortage => shortage.Product);
+            .Include(order => order.Shortages).ThenInclude(shortage => shortage.Product)
+            .Include(order => order.Movements).ThenInclude(movement => movement.Batch).ThenInclude(batch => batch.Product);
 
     private BatchView MapBatch(Batch batch)
     {
@@ -556,7 +566,53 @@ public sealed class StockReadModel(AppDbContext db, IClock clock)
             FreshnessRules.ForBatch(batch.Status, batch.ExpiresAt, now),
             batch.CertificateNumber,
             batch.CertificateIssuer,
-            batch.CertificateExpiresAt);
+            batch.CertificateExpiresAt,
+            batch.AcceptedQuantity,
+            batch.KitchenNote);
+    }
+
+    /// <summary>Партии, которые протухли и ждут, пока человек нажмёт «Списать».</summary>
+    public async Task<IReadOnlyList<BatchView>> PendingWriteOffsAsync(CancellationToken cancellationToken)
+    {
+        var batches = await db.Batches.AsNoTracking()
+            .Include(batch => batch.Product)
+            .Include(batch => batch.Delivery)
+            .Where(batch => batch.Status == BatchStatus.PendingWriteOff && batch.QuantityRemaining > 0)
+            .OrderBy(batch => batch.ExpiresAt)
+            .ToListAsync(cancellationToken);
+        return batches.Select(MapBatch).ToList();
+    }
+
+    /// <summary>Имена продуктов из списка, у которых доступный остаток стал нулём.</summary>
+    public async Task<IReadOnlyList<string>> DepletedNamesAsync(IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        var available = await AvailabilityAsync(cancellationToken);
+        var products = await db.Products.AsNoTracking()
+            .Where(product => productIds.Contains(product.Id))
+            .ToListAsync(cancellationToken);
+        return products
+            .Where(product => !available.TryGetValue(product.Id, out var row) || row.Quantity <= 0)
+            .Select(product => product.Name)
+            .ToList();
+    }
+
+    /// <summary>Имя и остаток партии для живого уведомления.</summary>
+    public async Task<IReadOnlyList<LiveBatchNotice>> BatchNoticesAsync(IReadOnlyCollection<Guid> batchIds, CancellationToken cancellationToken)
+    {
+        if (batchIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await db.Batches.AsNoTracking()
+            .Where(batch => batchIds.Contains(batch.Id))
+            .Select(batch => new LiveBatchNotice(batch.Id, batch.Product.Name, batch.QuantityRemaining, batch.ProductId))
+            .ToListAsync(cancellationToken);
     }
 
     private static bool IsAvailable(Batch batch, DateTime now) =>

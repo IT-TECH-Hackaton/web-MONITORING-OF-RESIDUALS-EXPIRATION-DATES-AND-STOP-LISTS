@@ -8,10 +8,12 @@ public enum Unit
     Pcs,
 }
 
-/// <summary>Партия: живая, выбранная до нуля или списанная по сроку.</summary>
+/// <summary>Партия: приехала и ещё не на складе, живая, под списание человеком, выбранная до нуля или списанная по сроку.</summary>
 public enum BatchStatus
 {
+    Arrived,
     Active,
+    PendingWriteOff,
     Depleted,
     Expired,
 }
@@ -32,12 +34,22 @@ public enum MovementType
     KitchenWriteOff,
 }
 
-/// <summary>Менеджер видит всё. Официант заказывает. Кухня ведёт смену и акты, заказы не создаёт.</summary>
+/// <summary>Менеджер видит всё. Официант заказывает. Кухня ведёт смену и акты. Поставка только присылает предложение.</summary>
 public enum UserRole
 {
     Manager,
     Waiter,
     Kitchen,
+    Supply,
+}
+
+/// <summary>Предложение ждёт, кухня принимает, менеджер подтверждает итог. Accepted — уже на складе.</summary>
+public enum DeliveryStage
+{
+    Parked,
+    Receiving,
+    KitchenDone,
+    Accepted,
 }
 
 /// <summary>Старая очередь тикета. Новый экран смены эти статусы не показывает.</summary>

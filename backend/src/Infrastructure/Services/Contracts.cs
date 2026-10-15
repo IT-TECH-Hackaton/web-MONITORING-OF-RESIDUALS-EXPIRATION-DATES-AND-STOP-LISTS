@@ -2,7 +2,7 @@ using Monitoring.Core;
 
 namespace Monitoring.Infrastructure.Services;
 
-public sealed record AuthenticatedUser(Guid Id, string Login, UserRole Role);
+public sealed record AuthenticatedUser(Guid Id, string Login, UserRole Role, bool Approved = true);
 
 public sealed record ReceiveDeliveryCommand(
     Guid Id,
@@ -10,7 +10,8 @@ public sealed record ReceiveDeliveryCommand(
     DateTime? CreatedAt,
     IReadOnlyList<DeliveryLineCommand> Items,
     string? Supplier = null,
-    Guid? ReceivedBy = null);
+    Guid? ReceivedBy = null,
+    bool Park = false);
 
 public sealed record QualityCertificateCommand(string Number, string Issuer, DateTime IssuedAt, DateTime ExpiresAt);
 
@@ -58,14 +59,24 @@ public sealed record BatchView(
     Freshness Freshness,
     string? CertificateNumber = null,
     string? CertificateIssuer = null,
-    DateTime? CertificateExpiresAt = null);
+    DateTime? CertificateExpiresAt = null,
+    decimal? AcceptedQuantity = null,
+    string? KitchenNote = null);
 
 public sealed record DeliveryView(
     Guid Id,
     string Number,
     DateTime CreatedAt,
     IReadOnlyList<BatchView> Batches,
-    string? Supplier = null);
+    string? Supplier = null,
+    DateTime? AcceptedAt = null,
+    DeliveryStage Stage = DeliveryStage.Accepted);
+
+public sealed record IntakeLineCommand(Guid BatchId, decimal Quantity, DateTime? ExpiresAt = null, string? Note = null);
+
+public sealed record SupplyExtraLine(Guid ProductId, decimal Quantity, DateTime ExpiresAt);
+
+public sealed record SupplyProductView(Guid Id, string Name, Unit Unit);
 
 public sealed record QrLineVerdict(string ProductName, string? CertificateNumber, bool Ok, string? Reason);
 
@@ -92,6 +103,8 @@ public sealed record OrderLineView(
     KitchenStatus KitchenStatus,
     string? KitchenNote);
 
+public sealed record OrderWriteOffView(string ProductName, decimal Before, decimal Quantity, decimal After);
+
 public sealed record OrderView(
     Guid Id,
     DateTime CreatedAt,
@@ -100,7 +113,8 @@ public sealed record OrderView(
     string? RejectionReason,
     IReadOnlyList<OrderLineView> Items,
     IReadOnlyList<ShortageView> Shortages,
-    string? TableNumber = null);
+    string? TableNumber = null,
+    IReadOnlyList<OrderWriteOffView>? WriteOffs = null);
 
 /// <summary>
 /// Итог заказа. Error — кривой вход (400). IsRejected — отказ без списания (409), тело заказа всё равно есть.

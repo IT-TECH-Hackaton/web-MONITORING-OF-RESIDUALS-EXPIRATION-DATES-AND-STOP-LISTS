@@ -6,6 +6,7 @@ namespace Monitoring.Infrastructure.Persistence;
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<UserAccount> Users => Set<UserAccount>();
+    public DbSet<StaffMessage> StaffMessages => Set<StaffMessage>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Dish> Dishes => Set<Dish>();
     public DbSet<DishIngredient> DishIngredients => Set<DishIngredient>();
@@ -30,6 +31,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(user => user.DisplayName).HasMaxLength(80);
             entity.Property(user => user.PasswordHash).HasMaxLength(256);
             entity.Property(user => user.Role).HasConversion<string>().HasMaxLength(16);
+            entity.Property(user => user.RefreshTokenHash).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<StaffMessage>(entity =>
+        {
+            entity.ToTable("staff_messages");
+            entity.Property(message => message.Text).HasMaxLength(500);
+            entity.Property(message => message.Channel).HasMaxLength(16).HasDefaultValue("Staff");
+            entity.HasIndex(message => new { message.Channel, message.CreatedAt });
+            entity.HasOne(message => message.Author).WithMany().HasForeignKey(message => message.AuthorId);
+            entity.HasOne(message => message.Recipient).WithMany().HasForeignKey(message => message.RecipientId);
         });
 
         modelBuilder.Entity<Product>(entity =>
@@ -62,6 +74,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.ToTable("deliveries");
             entity.Property(delivery => delivery.Number).HasMaxLength(64);
             entity.Property(delivery => delivery.Supplier).HasMaxLength(160);
+            entity.Property(delivery => delivery.Stage).HasConversion<string>().HasMaxLength(16);
             entity.HasOne(delivery => delivery.ReceivedByUser).WithMany().HasForeignKey(delivery => delivery.ReceivedBy);
         });
 
@@ -71,9 +84,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             {
                 table.HasCheckConstraint("ck_batches_quantity_remaining", "quantity_remaining >= 0");
                 table.HasCheckConstraint("ck_batches_quantity_initial", "quantity_initial > 0");
+                table.HasCheckConstraint("ck_batches_accepted_quantity", "accepted_quantity IS NULL OR (accepted_quantity >= 0 AND accepted_quantity <= quantity_initial)");
             });
             entity.Property(batch => batch.QuantityInitial).HasPrecision(18, 3);
             entity.Property(batch => batch.QuantityRemaining).HasPrecision(18, 3);
+            entity.Property(batch => batch.AcceptedQuantity).HasPrecision(18, 3);
             entity.Property(batch => batch.UnitCost).HasPrecision(18, 4);
             entity.Property(batch => batch.Status).HasConversion<string>().HasMaxLength(16);
             entity.Property(batch => batch.CertificateNumber).HasMaxLength(64);
@@ -121,7 +136,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(movement => movement.Type).HasConversion<string>().HasMaxLength(32);
             entity.Property(movement => movement.Reason).HasMaxLength(32);
             entity.HasIndex(movement => movement.CreatedAt);
+            entity.Property(movement => movement.QuantityBefore).HasPrecision(18, 3);
             entity.HasOne(movement => movement.Batch).WithMany(batch => batch.Movements).HasForeignKey(movement => movement.BatchId);
+            entity.HasOne(movement => movement.Order).WithMany(order => order.Movements).HasForeignKey(movement => movement.OrderId);
         });
 
         modelBuilder.Entity<ServiceShift>(entity =>

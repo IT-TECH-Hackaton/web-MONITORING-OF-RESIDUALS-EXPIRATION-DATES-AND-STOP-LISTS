@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -66,13 +67,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             },
         };
     });
-// Manager — только менеджер. Kitchen — менеджер и кухня. Orders — менеджер и официант. Staff — все три.
+// Manager — только менеджер. Kitchen — менеджер и кухня. Orders — менеджер и официант. Staff — эти трое. Supply — только предложение.
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("Manager", policy => policy.RequireRole(nameof(UserRole.Manager)));
     options.AddPolicy("Kitchen", policy => policy.RequireRole(nameof(UserRole.Manager), nameof(UserRole.Kitchen)));
     options.AddPolicy("Orders", policy => policy.RequireRole(nameof(UserRole.Manager), nameof(UserRole.Waiter)));
     options.AddPolicy("Staff", policy => policy.RequireRole(nameof(UserRole.Manager), nameof(UserRole.Waiter), nameof(UserRole.Kitchen)));
+    options.AddPolicy("Supply", policy => policy.RequireRole(nameof(UserRole.Supply)));
+    options.AddPolicy("Chat", policy => policy.RequireRole(nameof(UserRole.Manager), nameof(UserRole.Waiter), nameof(UserRole.Kitchen), nameof(UserRole.Supply)));
 });
 builder.Services.AddSignalR().AddJsonProtocol(options =>
 {
@@ -93,9 +96,42 @@ if (builder.Configuration.GetValue("Expiry:Enabled", true))
     builder.Services.AddHostedService<ExpiryWorker>();
 }
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("auth", httpContext =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                Window = TimeSpan.FromMinutes(1),
+                PermitLimit = 30,
+                QueueLimit = 0,
+            }));
+});
+
 var app = builder.Build();
+if (!app.Environment.IsDevelopment())
+{
+    var jwt = app.Configuration["Jwt:Key"] ?? "";
+    var inbound = app.Configuration["Inbound:Key"] ?? "";
+    if (jwt.Contains("dev-only", StringComparison.Ordinal) || inbound == "dev-inbound-key")
+    {
+        throw new InvalidOperationException("Задайте свои Jwt:Key и Inbound:Key. Учебные значения для продакшена не годятся.");
+    }
+}
+
 await app.Services.MigrateAndSeedAsync();
 
+app.UseExceptionHandler(handler =>
+{
+    handler.Run(async context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        await context.Response.WriteAsJsonAsync(new ErrorResponse("Не получилось выполнить запрос."));
+    });
+});
+app.UseRateLimiter();
 app.UseMonitoringSwagger();
 app.UseCors("clients");
 app.UseAuthentication();
@@ -105,8 +141,11 @@ app.MapGet("/health", () => Results.Ok(new HealthResponse("ok")))
     .Docs("Служебное", "Жив ли процесс", "Без токена. Выход: status = ok. Базу не проверяет.")
     .Ok<HealthResponse>();
 app.MapAuthEndpoints();
+app.MapStaffEndpoints();
 app.MapCatalogEndpoints();
 app.MapDeliveryEndpoints();
+app.MapInboundEndpoints();
+app.MapSupplyEndpoints();
 app.MapPurchaseEndpoints();
 app.MapStockEndpoints();
 app.MapOrderEndpoints();
